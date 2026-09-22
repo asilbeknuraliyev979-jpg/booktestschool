@@ -547,7 +547,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 </div>
               </div>
 
-              {(genError.includes('404') || genError.includes('Vercel') || genError.includes('GEMINI_API_KEY') || genError.includes('API')) && (
+              {(genError.includes('404') || genError.includes('Vercel') || genError.includes('GEMINI_API_KEY') || genError.includes('API') || genError.includes('FUNCTION_INVOCATION_FAILED') || genError.includes('server error')) && (
                 <div className="mt-2 p-3 bg-white rounded-lg border border-red-200 text-xs text-slate-700 space-y-1.5">
                   <p className="font-semibold text-red-800 flex items-center gap-1.5">
                     <span>💡 Vercel-da generatsiya qilish uchun qadamlar:</span>

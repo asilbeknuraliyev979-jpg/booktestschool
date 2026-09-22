@@ -11,7 +11,7 @@ import {
   createRateLimiter,
   getClientIp,
   sanitizeInput,
-} from "./server/security";
+} from "./src/server/security";
 
 const app = express();
 const PORT = 3000;
@@ -38,11 +38,13 @@ const evaluateRateLimiter = createRateLimiter({
 // Lazy init GenAI
 let aiClient: GoogleGenAI | null = null;
 function getGenAI(): GoogleGenAI {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      "GEMINI_API_KEY sozlanmagan. Vercel Settings -> Environment Variables bo'limida GEMINI_API_KEY o'zgaruvchisini yarating va loyihani Redeploy qiling."
+    );
+  }
   if (!aiClient) {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error("GEMINI_API_KEY is not defined in environment variables");
-    }
     aiClient = new GoogleGenAI({
       apiKey,
       httpOptions: {
@@ -55,8 +57,10 @@ function getGenAI(): GoogleGenAI {
   return aiClient;
 }
 
+const apiRouter = express.Router();
+
 // Health route
-app.get("/api/health", (req, res) => {
+apiRouter.get("/health", (req, res) => {
   res.json({ status: "ok" });
 });
 
@@ -65,7 +69,7 @@ app.get("/api/health", (req, res) => {
 // ==========================================
 
 // 1. Admin Login (Username: aistudio, Password: salom7852qaz)
-app.post("/api/admin/login", loginRateLimiter, (req, res) => {
+apiRouter.post("/admin/login", loginRateLimiter, (req, res) => {
   try {
     const { username, password } = req.body || {};
     if (!username || !password) {
@@ -99,7 +103,7 @@ app.post("/api/admin/login", loginRateLimiter, (req, res) => {
 });
 
 // 2. Admin Token Verification
-app.get("/api/admin/verify", (req, res) => {
+apiRouter.get("/admin/verify", (req, res) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     return res.status(401).json({ valid: false });
@@ -111,7 +115,7 @@ app.get("/api/admin/verify", (req, res) => {
 });
 
 // 3. Admin Logout
-app.post("/api/admin/logout", (req, res) => {
+apiRouter.post("/admin/logout", (req, res) => {
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith("Bearer ")) {
     const token = authHeader.slice(7).trim();
@@ -139,7 +143,7 @@ async function extractTextFromPDF(buffer: Buffer): Promise<{ text: string; pageC
 }
 
 // 1. PDF Parse endpoint (instant parsing & preview - Admin protected)
-app.post("/api/parse-pdf", requireAdminAuth, async (req, res) => {
+apiRouter.post("/parse-pdf", requireAdminAuth, async (req, res) => {
   try {
     const { pdfBase64 } = req.body;
     if (!pdfBase64) {
@@ -281,7 +285,7 @@ ${contentSlice}
 }
 
 // 2. Professional AI Question Generation API (Admin protected)
-app.post("/api/generate-questions", requireAdminAuth, async (req, res) => {
+apiRouter.post("/generate-questions", requireAdminAuth, async (req, res) => {
   try {
     const {
       bookTitle,
@@ -400,7 +404,7 @@ app.post("/api/generate-questions", requireAdminAuth, async (req, res) => {
 });
 
 // 3. AI Written Answers Semantic Evaluation API (Rate limited & sanitized)
-app.post("/api/evaluate-written-answers", evaluateRateLimiter, async (req, res) => {
+apiRouter.post("/evaluate-written-answers", evaluateRateLimiter, async (req, res) => {
   try {
     const { evaluations, bookTitle } = req.body;
     if (!evaluations || !Array.isArray(evaluations) || evaluations.length === 0) {
@@ -525,6 +529,10 @@ ${JSON.stringify(
   }
 });
 
+// Mount router for both /api/* and root /* (guarantees matching with or without Vercel rewrite prefix)
+app.use("/api", apiRouter);
+app.use(apiRouter);
+
 // Start Vite / Static handler
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
@@ -548,7 +556,13 @@ async function startServer() {
 }
 
 // In local & container run startServer(), on Vercel export app as serverless handler
-if (!process.env.VERCEL) {
+const isServerless =
+  Boolean(process.env.VERCEL) ||
+  Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME) ||
+  Boolean(process.env.NOW_REGION) ||
+  Boolean(process.env.VERCEL_ENV);
+
+if (!isServerless) {
   startServer();
 }
 
