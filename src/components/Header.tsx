@@ -42,7 +42,19 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
 
         {/* Right Action */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3">
+          {!isAdmin && (
+            <button
+              id="admin-header-link"
+              type="button"
+              onClick={onAdminClick}
+              className="text-[11px] font-mono font-medium text-slate-400 hover:text-slate-700 hover:bg-slate-100 px-2 py-0.5 rounded transition-colors tracking-tight cursor-pointer"
+              title="Admin tizimiga kirish"
+            >
+              admin
+            </button>
+          )}
+
           {!isAdmin && studentName && (
             <div className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-900">
               <GraduationCap className="w-4 h-4 text-blue-600" />

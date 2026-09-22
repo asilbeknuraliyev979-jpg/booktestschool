@@ -102,6 +102,17 @@ export const BookTestList: React.FC<BookTestListProps> = ({
                       if (!isStudentReady) {
                         onNeedStudentInfo();
                       } else {
+                        // Immediately request fullscreen on user click gesture as requested
+                        try {
+                          const elem = document.documentElement as any;
+                          if (elem.requestFullscreen) {
+                            elem.requestFullscreen().catch(() => {});
+                          } else if (elem.webkitRequestFullscreen) {
+                            elem.webkitRequestFullscreen();
+                          }
+                        } catch {
+                          // Ignore if denied by browser
+                        }
                         onStartTest(book);
                       }
                     }}

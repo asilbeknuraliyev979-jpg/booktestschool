@@ -213,10 +213,10 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col antialiased">
-      {/* Top Navbar: Admin button is hidden from UI; only shows Exit when logged in */}
+      {/* Top Navbar: Admin button is accessible via small header link or /admin URL */}
       <Header
         isAdmin={isAdmin}
-        onAdminClick={() => {}}
+        onAdminClick={() => setIsPasscodeModalOpen(true)}
         onExitAdmin={handleExitAdmin}
         studentName={studentInfo.fullName}
         studentGrade={studentInfo.grade}
