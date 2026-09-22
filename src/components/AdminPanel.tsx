@@ -38,6 +38,7 @@ import {
   AIGenerationConfig,
   StudentTestResult,
 } from '../types';
+import { safeFetchJson } from '../utils/api';
 import { exportResultsToExcel } from '../utils/excelExport';
 import { StudentAnalyticsDashboard } from './StudentAnalyticsDashboard';
 
@@ -139,7 +140,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
         try {
           const token = adminToken || sessionStorage.getItem('maktab_admin_token') || '';
-          const res = await fetch('/api/parse-pdf', {
+          const data = await safeFetchJson<{
+            success: boolean;
+            error?: string;
+            fullText: string;
+            pageCount: number;
+            characterCount: number;
+          }>('/api/parse-pdf', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -148,8 +155,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             body: JSON.stringify({ pdfBase64: base64String }),
           });
 
-          const data = await res.json();
-          if (!res.ok || !data.success) {
+          if (!data.success) {
             throw new Error(data.error || "PDF matnini ajratib bo'lmadi.");
           }
 
@@ -221,7 +227,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       }, 3500);
 
       const token = adminToken || sessionStorage.getItem('maktab_admin_token') || '';
-      const response = await fetch('/api/generate-questions', {
+      const resData = await safeFetchJson<{
+        success: boolean;
+        error?: string;
+        data: {
+          multipleChoiceQuestions: any[];
+          writtenQuestions: any[];
+        };
+      }>('/api/generate-questions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -238,9 +251,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         }),
       });
 
-      const resData = await response.json();
-
-      if (!response.ok || !resData.success) {
+      if (!resData.success || !resData.data) {
         throw new Error(resData.error || "Savollarni generatsiya qilishda xatolik yuz berdi");
       }
 
@@ -527,12 +538,28 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           </div>
 
           {genError && (
-            <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs sm:text-sm flex items-start gap-2.5 animate-in fade-in">
-              <AlertCircle className="w-5 h-5 shrink-0 mt-0.5 text-red-600" />
-              <div>
-                <p className="font-bold">Xatolik yuz berdi</p>
-                <p className="mt-0.5">{genError}</p>
+            <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs sm:text-sm flex flex-col gap-2 animate-in fade-in">
+              <div className="flex items-start gap-2.5">
+                <AlertCircle className="w-5 h-5 shrink-0 mt-0.5 text-red-600" />
+                <div>
+                  <p className="font-bold">Xatolik yuz berdi</p>
+                  <p className="mt-0.5">{genError}</p>
+                </div>
               </div>
+
+              {(genError.includes('404') || genError.includes('Vercel') || genError.includes('GEMINI_API_KEY') || genError.includes('API')) && (
+                <div className="mt-2 p-3 bg-white rounded-lg border border-red-200 text-xs text-slate-700 space-y-1.5">
+                  <p className="font-semibold text-red-800 flex items-center gap-1.5">
+                    <span>💡 Vercel-da generatsiya qilish uchun qadamlar:</span>
+                  </p>
+                  <ol className="list-decimal list-inside space-y-1 text-slate-600">
+                    <li>Vercel Dashboard-ga kiring va loyihangiz sahifasini oching.</li>
+                    <li><strong>Settings</strong> ➔ <strong>Environment Variables</strong> bo'limiga o'ting.</li>
+                    <li>Yangi o'zgaruvchi qo'shing: <strong>Key</strong>: <code className="bg-slate-100 px-1 py-0.5 rounded text-blue-700 font-mono">GEMINI_API_KEY</code>, <strong>Value</strong>: sizning Gemini API kalitingiz.</li>
+                    <li>Loyiha GitHub omboriga yangi o'zgarishlarni yuklang yoki Vercel-da <strong>Redeploy</strong> tugmasini bosing.</li>
+                  </ol>
+                </div>
+              )}
             </div>
           )}
 
