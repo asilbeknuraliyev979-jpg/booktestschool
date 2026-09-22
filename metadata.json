@@ -1,0 +1,6 @@
+{
+  "name": "Maktab Kitob Savol",
+  "description": "Maktab darsliklari bo'yicha savol-javoblar, boblar testlari va bilimni mustahkamlash platformasi",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
