@@ -1,0 +1,44 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isValidBook(data) {
+      return data.id is string &&
+             data.title is string &&
+             data.title.size() > 0 &&
+             data.title.size() <= 300;
+    }
+
+    function isValidResult(data) {
+      return data.studentName is string &&
+             data.studentName.size() > 0 &&
+             data.studentName.size() <= 100 &&
+             data.bookId is string;
+    }
+
+    // Books collection - accessible by all students and teachers
+    match /books/{bookId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Test results collection - submitted by students, viewed in admin analytics
+    match /results/{resultId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Global settings collection (exam limits, timer, question count)
+    match /settings/{configId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Connection test document
+    match /test/{docId} {
+      allow read, write: if true;
+    }
+  }
+}

@@ -54,7 +54,7 @@ export const Header: React.FC<HeaderProps> = ({
             }`}
             title={
               isLiveConnected
-                ? "Barcha kompyuterlar bilan markaziy server orqali real vaqtda ulangan (Global Real-time)"
+                ? "Google Firebase orqali barcha kompyuterlar bilan global miqyosda real vaqtda ulangan"
                 : "Serverga qayta ulanmoqda..."
             }
           >
@@ -64,8 +64,8 @@ export const Header: React.FC<HeaderProps> = ({
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                   <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                 </span>
-                <span className="hidden md:inline">Global:</span>
-                <span className="font-bold">Real-time</span>
+                <span className="hidden md:inline">Firebase:</span>
+                <span className="font-bold">Live</span>
               </>
             ) : (
               <>

@@ -1,0 +1,66 @@
+{
+  "entities": {
+    "Book": {
+      "title": "Book",
+      "description": "Maktab kitob testi va savollari to'plami",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "author": { "type": "string" },
+        "grade": { "type": "string" },
+        "coverColor": { "type": "string" },
+        "description": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "isActive": { "type": "boolean" },
+        "questions": { "type": "array" }
+      },
+      "required": ["id", "title", "grade"]
+    },
+    "StudentResult": {
+      "title": "StudentResult",
+      "description": "O'quvchi tomonidan topshirilgan test natijasi",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentName": { "type": "string" },
+        "studentClass": { "type": "string" },
+        "bookId": { "type": "string" },
+        "bookTitle": { "type": "string" },
+        "score": { "type": "number" },
+        "totalQuestions": { "type": "number" },
+        "percentage": { "type": "number" },
+        "date": { "type": "string" },
+        "details": { "type": "array" },
+        "timeTakenSeconds": { "type": "number" }
+      },
+      "required": ["id", "studentName", "studentClass", "bookId"]
+    },
+    "DeliveryConfig": {
+      "title": "DeliveryConfig",
+      "description": "Imtihon parametr va savollar soni sozlamalari",
+      "type": "object",
+      "properties": {
+        "totalQuestions": { "type": "number" },
+        "multipleChoiceCount": { "type": "number" },
+        "writtenCount": { "type": "number" },
+        "timeLimitMinutes": { "type": "number" }
+      },
+      "required": ["totalQuestions", "timeLimitMinutes"]
+    }
+  },
+  "firestore": {
+    "/books/{bookId}": {
+      "schema": "Book",
+      "description": "Barcha maktab kitoblari va ularning test savollari"
+    },
+    "/results/{resultId}": {
+      "schema": "StudentResult",
+      "description": "O'quvchilarning real vaqtda kelib tushadigan test natijalari"
+    },
+    "/settings/{configId}": {
+      "schema": "DeliveryConfig",
+      "description": "Imtihon umumiy parametr sozlamalari"
+    }
+  }
+}

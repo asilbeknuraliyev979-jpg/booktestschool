@@ -93,6 +93,7 @@ export interface StudentTestResult {
   writtenTotal: number;
   durationSeconds: number;
   completedAt: string;
+  submittedAt?: number;
   gradeBadge: '5 (A\'lo)' | '4 (Yaxshi)' | '3 (Qoniqarli)' | '2 (Qoniqarsiz)';
   terminatedReason?: 'normal' | 'timeout' | 'tab_switch';
   details: QuestionResultDetail[];

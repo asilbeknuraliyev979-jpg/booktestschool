@@ -7,6 +7,17 @@ import { AdminPasscodeModal } from './components/AdminPasscodeModal';
 import { AdminPanel } from './components/AdminPanel';
 import { Book, StudentInfo, TestDeliveryConfig, StudentTestResult } from './types';
 import { INITIAL_BOOKS } from './data/initialBooks';
+import {
+  subscribeToBooks,
+  subscribeToResults,
+  subscribeToDeliveryConfig,
+  pushAllBooksToFirestore,
+  saveResultToFirestore,
+  deleteResultFromFirestore,
+  clearAllResultsFromFirestore,
+  saveDeliveryConfigToFirestore,
+  testFirestoreConnection,
+} from './services/firebase';
 
 const STORAGE_KEYS = {
   BOOKS: 'maktab_kitoblar_v2',
@@ -81,130 +92,138 @@ export default function App() {
     localStorage.setItem(STORAGE_KEYS.RESULTS, JSON.stringify(results));
   }, [results]);
 
-  // Global Real-time Multi-Computer Synchronization (SSE + Live Broadcast)
+  // Global Real-time Multi-Computer Synchronization (Google Firebase Firestore + SSE Backup)
   useEffect(() => {
+    // 1. Initial Firestore connection test
+    testFirestoreConnection();
+
+    // 2. Firebase Firestore Real-Time Subscriptions (Master Global Source)
+    const unsubscribeBooks = subscribeToBooks((firestoreBooks) => {
+      if (Array.isArray(firestoreBooks) && firestoreBooks.length > 0) {
+        setBooks(firestoreBooks);
+        setIsLiveConnected(true);
+      }
+    });
+
+    const unsubscribeResults = subscribeToResults((firestoreResults) => {
+      if (Array.isArray(firestoreResults)) {
+        setResults(firestoreResults);
+      }
+    });
+
+    const unsubscribeConfig = subscribeToDeliveryConfig((firestoreConfig) => {
+      if (firestoreConfig) {
+        setDeliveryConfig((prev) => ({ ...prev, ...firestoreConfig }));
+      }
+    });
+
+    // 3. Fallback SSE & Polling
     let eventSource: EventSource | null = null;
     let reconnectTimeout: any = null;
-    let pollInterval: any = null;
 
     const connectSSE = () => {
       try {
         eventSource = new EventSource('/api/realtime/events');
-
-        eventSource.onopen = () => {
-          setIsLiveConnected(true);
-        };
-
+        eventSource.onopen = () => setIsLiveConnected(true);
         eventSource.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data);
             if (data.type === 'init') {
               if (Array.isArray(data.books) && data.books.length > 0) {
-                setBooks(data.books);
+                setBooks((prev) => (prev.length === 0 ? data.books : prev));
               }
               if (Array.isArray(data.results)) {
-                setResults(data.results);
+                setResults((prev) => (prev.length === 0 ? data.results : prev));
               }
-              if (data.deliveryConfig) {
-                setDeliveryConfig((prev) => ({ ...prev, ...data.deliveryConfig }));
-              }
-              setIsLiveConnected(true);
-            } else if (data.type === 'books_updated' && Array.isArray(data.data?.books)) {
-              setBooks(data.data.books);
-            } else if (data.type === 'results_updated' && Array.isArray(data.data?.results)) {
-              setResults(data.data.results);
-            } else if (data.type === 'config_updated' && data.data?.config) {
-              setDeliveryConfig((prev) => ({ ...prev, ...data.data.config }));
             }
-          } catch (err) {
-            console.warn("Failed to parse SSE payload:", err);
+          } catch {
+            // Ignore parse errors
           }
         };
-
         eventSource.onerror = () => {
-          setIsLiveConnected(false);
           if (eventSource) {
             eventSource.close();
             eventSource = null;
           }
-          reconnectTimeout = setTimeout(connectSSE, 3000);
+          reconnectTimeout = setTimeout(connectSSE, 5000);
         };
-      } catch (err) {
-        setIsLiveConnected(false);
-        reconnectTimeout = setTimeout(connectSSE, 4000);
+      } catch {
+        reconnectTimeout = setTimeout(connectSSE, 5000);
       }
     };
 
     connectSSE();
 
-    // Redundant fast poll every 4 seconds to guarantee sync even across strict proxies
-    const runFallbackPoll = async () => {
-      try {
-        const res = await fetch('/api/sync/status');
-        if (res.ok) {
-          setIsLiveConnected(true);
-        }
-      } catch {
-        setIsLiveConnected(false);
-      }
-    };
-
-    pollInterval = setInterval(runFallbackPoll, 4000);
-
     return () => {
+      unsubscribeBooks();
+      unsubscribeResults();
+      unsubscribeConfig();
       if (eventSource) eventSource.close();
       if (reconnectTimeout) clearTimeout(reconnectTimeout);
-      if (pollInterval) clearInterval(pollInterval);
     };
   }, []);
 
-  // Update books and synchronize with server for all computers
+  // Update books and synchronize globally across ALL computers via Firebase
   const handleUpdateBooks = (newBooks: Book[] | ((prev: Book[]) => Book[])) => {
     setBooks((prev) => {
       const updated = typeof newBooks === 'function' ? newBooks(prev) : newBooks;
+      // 1. Google Firebase Firestore Real-Time Global Push
+      pushAllBooksToFirestore(updated).catch((err) =>
+        console.warn("Firestore push notice:", err)
+      );
+      // 2. Also keep backend in sync
       queueMicrotask(() => {
         fetch('/api/books', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ books: updated }),
-        }).catch((err) => console.warn("Could not sync books to server:", err));
+        }).catch((err) => console.warn("Local sync warning:", err));
       });
       return updated;
     });
   };
 
-  // Update delivery config and synchronize with server
+  // Update delivery config and synchronize globally
   const handleUpdateDeliveryConfig = (newConfig: TestDeliveryConfig | ((prev: TestDeliveryConfig) => TestDeliveryConfig)) => {
     setDeliveryConfig((prev) => {
       const updated = typeof newConfig === 'function' ? newConfig(prev) : newConfig;
+      saveDeliveryConfigToFirestore(updated).catch((err) =>
+        console.warn("Firestore config save notice:", err)
+      );
       queueMicrotask(() => {
         fetch('/api/delivery-config', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ config: updated }),
-        }).catch((err) => console.warn("Could not sync delivery config to server:", err));
+        }).catch((err) => console.warn("Local config sync warning:", err));
       });
       return updated;
     });
   };
 
-  // Clear all results and sync with server
+  // Clear all results globally
   const handleClearResults = async () => {
     setResults([]);
+    clearAllResultsFromFirestore().catch((err) =>
+      console.warn("Firestore clear notice:", err)
+    );
     try {
       await fetch('/api/results', { method: 'DELETE' });
     } catch (e) {
-      console.warn("Could not clear results on server:", e);
+      console.warn("Local clear notice:", e);
     }
   };
 
-  // Delete single result and sync with server
+  // Delete single result globally
   const handleDeleteResult = async (resId: string) => {
     setResults((prev) => prev.filter((r) => r.id !== resId));
+    deleteResultFromFirestore(resId).catch((err) =>
+      console.warn("Firestore delete notice:", err)
+    );
     try {
       await fetch(`/api/results/${resId}`, { method: 'DELETE' });
     } catch (e) {
-      console.warn("Could not delete result on server:", e);
+      console.warn("Local delete notice:", e);
     }
   };
 
@@ -319,12 +338,16 @@ export default function App() {
 
   const handleTestComplete = (newResult: StudentTestResult) => {
     setResults((prev) => [newResult, ...prev]);
-    // Save to central server so teacher's PC sees the result immediately
+    // 1. Save to Google Firebase Firestore globally (Teacher's analytics updates instantly)
+    saveResultToFirestore(newResult).catch((err) =>
+      console.warn("Firestore result save notice:", err)
+    );
+    // 2. Also send to local backend
     fetch('/api/results', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ result: newResult }),
-    }).catch((err) => console.warn("Could not sync test result:", err));
+    }).catch((err) => console.warn("Local result sync notice:", err));
 
     // Clear saved student so next entry starts completely clean
     setStudentInfo({ fullName: '', grade: '' });

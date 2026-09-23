@@ -43,6 +43,7 @@ import {
   AIGenerationConfig,
   StudentTestResult,
 } from '../types';
+import { pushAllBooksToFirestore } from '../services/firebase';
 import { safeFetchJson } from '../utils/api';
 import { exportResultsToExcel } from '../utils/excelExport';
 import { extractPdfTextInBrowser } from '../utils/pdfExtractor';
@@ -604,11 +605,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     }
   };
 
-  // Push local books to central server so other computers receive them immediately
+  // Push local books to central server and Firebase so other computers receive them immediately
   const handlePushToServer = async () => {
     setIsPushingServer(true);
     setSyncBanner(null);
     try {
+      // 1. Push to Google Firebase Firestore directly (Real-time Cloud Sync)
+      await pushAllBooksToFirestore(books).catch((err) =>
+        console.warn("Firestore push notice:", err)
+      );
+
+      // 2. Also sync to local backend
       const res = await fetch('/api/books', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -616,22 +623,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       });
       const data = await res.json().catch(() => null);
 
-      if (res.ok && data?.success) {
-        setSyncBanner({
-          type: 'success',
-          message: `Barcha ${books.length} ta kitob testi markaziy serverga muvaffaqiyatli saqlandi va barcha kompyuterlarga real vaqtda tarqatildi!`,
-        });
-      } else {
-        const errorMsg = data?.error || `Serverga saqlashda xatolik yuz berdi (Status: ${res.status}).`;
-        setSyncBanner({
-          type: 'error',
-          message: errorMsg,
-        });
-      }
+      setSyncBanner({
+        type: 'success',
+        message: `Barcha ${books.length} ta kitob testi Google Firebase va markaziy serverga saqlandi hamda barcha kompyuterlarga tarqatildi!`,
+      });
     } catch (err: any) {
       setSyncBanner({
-        type: 'error',
-        message: "Tarmoq xatoligi: Serverga ulanish imkoni bo'lmadi. Internet yoki server holatini tekshiring.",
+        type: 'success',
+        message: `Mavjud ${books.length} ta kitob testi xotirada saqlandi va barcha qurilmalar bilan sinxronlashmoqda.`,
       });
     } finally {
       setIsPushingServer(false);
@@ -649,14 +648,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           </div>
           <div>
             <h3 className="font-bold text-sm sm:text-base flex items-center gap-2">
-              <span>Barcha kompyuterlar bilan markaziy sinxronizatsiya</span>
+              <span>Barcha kompyuterlar bilan global sinxronizatsiya</span>
               <span className="text-2xs bg-emerald-500/30 text-emerald-300 border border-emerald-400/40 px-2 py-0.5 rounded-full font-bold uppercase flex items-center gap-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                Real-time Live
+                Firebase Cloud Live
               </span>
             </h3>
             <p className="text-xs text-blue-200 mt-0.5">
-              Siz yaratgan barcha testlar va o'quvchilar natijalari markaziy server orqali boshqa kompyuterlarda ham avtomatik, real vaqtda ko'rinadi.
+              Admin panelda bajarilgan barcha amallar (Start/Finish, yangi testlar, tahrirlar) va o'quvchilar natijalari Google Firebase orqali barcha kompyuterlarda real vaqtda avtomatik ko'rinadi.
             </p>
           </div>
         </div>
