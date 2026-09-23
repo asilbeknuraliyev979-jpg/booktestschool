@@ -620,22 +620,24 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ books }),
       });
-      if (res.ok) {
-        const data = await res.json();
+      const data = await res.json().catch(() => null);
+
+      if (res.ok && data?.success) {
         setSyncBanner({
           type: 'success',
-          message: `Barcha ${books.length} ta kitob testi markaziy serverga saqlandi va barcha kompyuterlarga real vaqtda tarqatildi!`,
+          message: `Barcha ${books.length} ta kitob testi markaziy serverga muvaffaqiyatli saqlandi va barcha kompyuterlarga real vaqtda tarqatildi!`,
         });
       } else {
+        const errorMsg = data?.error || `Serverga saqlashda xatolik yuz berdi (Status: ${res.status}).`;
         setSyncBanner({
           type: 'error',
-          message: `Serverga saqlashda xatolik yuz berdi (Status: ${res.status}).`,
+          message: errorMsg,
         });
       }
-    } catch {
+    } catch (err: any) {
       setSyncBanner({
         type: 'error',
-        message: "Tarmoq xatoligi: Serverga ma'lumot jo'natib bo'lmadi.",
+        message: "Tarmoq xatoligi: Serverga ulanish imkoni bo'lmadi. Internet yoki server holatini tekshiring.",
       });
     } finally {
       setIsPushingServer(false);

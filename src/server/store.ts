@@ -24,16 +24,27 @@ let inMemoryData: AppStorageData = {
   version: Date.now(),
 };
 
-// Determine storage path (supports local Node and serverless /tmp fallback)
+// Determine storage path (supports local Node, Cloud Run, and serverless /tmp fallback)
+let resolvedStoragePath: string | null = null;
+
 function getStorageFilePath(): string {
+  if (resolvedStoragePath) return resolvedStoragePath;
+
   try {
     const dataDir = path.join(process.cwd(), "data");
     if (!fs.existsSync(dataDir)) {
       fs.mkdirSync(dataDir, { recursive: true });
     }
-    return path.join(dataDir, "maktab_store.json");
+    // Test write permission in dataDir
+    const testFile = path.join(dataDir, `.write-test-${Date.now()}`);
+    fs.writeFileSync(testFile, "ok", "utf-8");
+    fs.unlinkSync(testFile);
+    resolvedStoragePath = path.join(dataDir, "maktab_store.json");
+    return resolvedStoragePath;
   } catch {
-    return path.join("/tmp", "maktab_store.json");
+    // If process.cwd()/data is read-only (common in Cloud Run containers), safely fall back to /tmp
+    resolvedStoragePath = path.join("/tmp", "maktab_store.json");
+    return resolvedStoragePath;
   }
 }
 
@@ -70,13 +81,13 @@ function loadFromDisk(): void {
   }
 }
 
-// Save storage asynchronously to disk
+// Save storage to disk safely without throwing
 function saveToDisk(): void {
   try {
     const filePath = getStorageFilePath();
     fs.writeFileSync(filePath, JSON.stringify(inMemoryData, null, 2), "utf-8");
   } catch (err) {
-    console.warn("Could not persist storage to disk:", err);
+    console.warn("Could not persist storage to disk, staying in-memory:", err);
   }
 }
 
@@ -96,41 +107,83 @@ export const storage = {
     return inMemoryData.books;
   },
   saveBooks(books: Book[]): Book[] {
-    if (!Array.isArray(books) || books.length === 0) {
-      inMemoryData.books = INITIAL_BOOKS;
-    } else {
-      inMemoryData.books = books;
+    try {
+      if (!Array.isArray(books) || books.length === 0) {
+        inMemoryData.books = INITIAL_BOOKS;
+      } else {
+        // Sanitize books to ensure completely clean, serializable objects
+        inMemoryData.books = books.map((b, index) => ({
+          id: String(b.id || `book-${Date.now()}-${index}`),
+          title: String(b.title || '').trim(),
+          author: String(b.author || 'Noma\'lum').trim(),
+          grade: String(b.grade || '5-sinf'),
+          coverColor: String(b.coverColor || 'from-blue-600 to-indigo-800'),
+          description: String(b.description || ''),
+          createdAt: b.createdAt || new Date().toISOString(),
+          isActive: b.isActive !== false,
+          questions: Array.isArray(b.questions)
+            ? b.questions.map((q, qIndex) => ({
+                id: String(q.id || `q-${index}-${qIndex}`),
+                type: q.type === 'written' ? 'written' : 'multiple-choice',
+                question: String(q.question || ''),
+                options: Array.isArray(q.options) ? q.options.map(String) : ['A', 'B', 'C', 'D'],
+                correctOptionIndex: typeof q.correctOptionIndex === 'number' ? q.correctOptionIndex : 0,
+                explanation: String(q.explanation || ''),
+                expectedAnswer: q.expectedAnswer ? String(q.expectedAnswer) : undefined,
+                keywords: Array.isArray(q.keywords) ? q.keywords.map(String) : undefined,
+              }))
+            : [],
+        }));
+      }
+      inMemoryData.version = Date.now();
+      saveToDisk();
+    } catch (err) {
+      console.warn("Storage saveBooks error, keeping current memory:", err);
     }
-    inMemoryData.version = Date.now();
-    saveToDisk();
     return inMemoryData.books;
   },
   getResults(): StudentTestResult[] {
     return inMemoryData.results;
   },
   addResult(result: StudentTestResult): StudentTestResult {
-    inMemoryData.results = [result, ...inMemoryData.results];
-    inMemoryData.version = Date.now();
-    saveToDisk();
+    try {
+      inMemoryData.results = [result, ...inMemoryData.results];
+      inMemoryData.version = Date.now();
+      saveToDisk();
+    } catch (err) {
+      console.warn("Storage addResult error:", err);
+    }
     return result;
   },
   clearResults(): void {
-    inMemoryData.results = [];
-    inMemoryData.version = Date.now();
-    saveToDisk();
+    try {
+      inMemoryData.results = [];
+      inMemoryData.version = Date.now();
+      saveToDisk();
+    } catch (err) {
+      console.warn("Storage clearResults error:", err);
+    }
   },
   deleteResult(resultId: string): void {
-    inMemoryData.results = inMemoryData.results.filter((r) => r.id !== resultId);
-    inMemoryData.version = Date.now();
-    saveToDisk();
+    try {
+      inMemoryData.results = inMemoryData.results.filter((r) => r.id !== resultId);
+      inMemoryData.version = Date.now();
+      saveToDisk();
+    } catch (err) {
+      console.warn("Storage deleteResult error:", err);
+    }
   },
   getDeliveryConfig(): TestDeliveryConfig {
     return inMemoryData.deliveryConfig;
   },
   saveDeliveryConfig(config: TestDeliveryConfig): TestDeliveryConfig {
-    inMemoryData.deliveryConfig = { ...inMemoryData.deliveryConfig, ...config };
-    inMemoryData.version = Date.now();
-    saveToDisk();
+    try {
+      inMemoryData.deliveryConfig = { ...inMemoryData.deliveryConfig, ...config };
+      inMemoryData.version = Date.now();
+      saveToDisk();
+    } catch (err) {
+      console.warn("Storage saveDeliveryConfig error:", err);
+    }
     return inMemoryData.deliveryConfig;
   },
 };

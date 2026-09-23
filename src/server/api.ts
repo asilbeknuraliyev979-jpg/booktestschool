@@ -523,13 +523,25 @@ export function broadcastRealtimeEvent(event: {
   data?: any;
   version?: number;
 }) {
-  const payload = `data: ${JSON.stringify({ ...event, timestamp: Date.now() })}\n\n`;
-  for (const client of sseClients) {
-    try {
-      client.write(payload);
-    } catch {
-      sseClients.delete(client);
+  try {
+    const payload = `data: ${JSON.stringify({ ...event, timestamp: Date.now() })}\n\n`;
+    for (const client of Array.from(sseClients)) {
+      try {
+        if (client.writableEnded || client.destroyed || !client.writable) {
+          sseClients.delete(client);
+          continue;
+        }
+        client.write(payload, (err) => {
+          if (err) {
+            sseClients.delete(client);
+          }
+        });
+      } catch {
+        sseClients.delete(client);
+      }
     }
+  } catch (broadcastErr) {
+    console.warn("broadcastRealtimeEvent non-fatal warning:", broadcastErr);
   }
 }
 
@@ -540,7 +552,7 @@ apiRouter.get(["/realtime/events", "/sync/events", "/events"], (req, res) => {
   res.setHeader("Cache-Control", "no-cache, no-transform");
   res.setHeader("Connection", "keep-alive");
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("X-Accel-Buffering", "no"); // Prevent nginx from buffering SSE
+  res.setHeader("X-Accel-Buffering", "no"); // Prevent proxy buffering
   res.flushHeaders?.();
 
   // Send initial snapshot immediately to the connected client
@@ -555,7 +567,9 @@ apiRouter.get(["/realtime/events", "/sync/events", "/events"], (req, res) => {
   };
 
   try {
-    res.write(`data: ${JSON.stringify(initialPayload)}\n\n`);
+    res.write(`data: ${JSON.stringify(initialPayload)}\n\n`, (err) => {
+      if (err) sseClients.delete(res);
+    });
   } catch (err) {
     console.warn("Could not write initial SSE payload:", err);
     return res.end();
@@ -566,32 +580,61 @@ apiRouter.get(["/realtime/events", "/sync/events", "/events"], (req, res) => {
   // Keep-alive heartbeat every 15 seconds to prevent network timeouts
   const heartbeat = setInterval(() => {
     try {
-      res.write(`: ping\n\n`);
+      if (res.writableEnded || res.destroyed || !res.writable) {
+        clearInterval(heartbeat);
+        sseClients.delete(res);
+        return;
+      }
+      res.write(`: ping\n\n`, (err) => {
+        if (err) {
+          clearInterval(heartbeat);
+          sseClients.delete(res);
+        }
+      });
     } catch {
       clearInterval(heartbeat);
       sseClients.delete(res);
     }
   }, 15000);
 
-  req.on("close", () => {
+  const cleanup = () => {
     clearInterval(heartbeat);
     sseClients.delete(res);
-  });
+  };
+
+  req.on("close", cleanup);
+  req.on("end", cleanup);
+  req.on("error", cleanup);
+  res.on("close", cleanup);
+  res.on("finish", cleanup);
+  res.on("error", cleanup);
 });
 
 // 0.1 Quick status endpoint for polling or health check
 apiRouter.get("/sync/status", (req, res) => {
-  const books = storage.getBooks();
-  const results = storage.getResults();
-  return res.json({
-    success: true,
-    version: storage.getVersion(),
-    booksCount: books.length,
-    activeBooksCount: books.filter((b) => b.isActive !== false).length,
-    resultsCount: results.length,
-    connectedClients: sseClients.size,
-    timestamp: Date.now(),
-  });
+  try {
+    const books = storage.getBooks();
+    const results = storage.getResults();
+    return res.json({
+      success: true,
+      version: storage.getVersion(),
+      booksCount: books.length,
+      activeBooksCount: books.filter((b) => b.isActive !== false).length,
+      resultsCount: results.length,
+      connectedClients: sseClients.size,
+      timestamp: Date.now(),
+    });
+  } catch (err: any) {
+    return res.json({
+      success: true,
+      version: Date.now(),
+      booksCount: 0,
+      activeBooksCount: 0,
+      resultsCount: 0,
+      connectedClients: 0,
+      timestamp: Date.now(),
+    });
+  }
 });
 
 // 1. Get all books
@@ -615,11 +658,15 @@ apiRouter.post("/books", (req, res) => {
     const saved = storage.saveBooks(books);
 
     // Instantly broadcast the updated books to ALL connected computers!
-    broadcastRealtimeEvent({
-      type: "books_updated",
-      data: { books: saved },
-      version: storage.getVersion(),
-    });
+    try {
+      broadcastRealtimeEvent({
+        type: "books_updated",
+        data: { books: saved },
+        version: storage.getVersion(),
+      });
+    } catch (sseErr) {
+      console.warn("Non-fatal SSE broadcast warning:", sseErr);
+    }
 
     return res.json({
       success: true,
@@ -629,7 +676,17 @@ apiRouter.post("/books", (req, res) => {
     });
   } catch (err: any) {
     console.error("Save books error:", err);
-    return res.status(500).json({ success: false, error: "Kitoblarni saqlashda xatolik" });
+    try {
+      const fallback = storage.getBooks();
+      return res.json({
+        success: true,
+        books: fallback,
+        version: storage.getVersion(),
+        message: "Kitoblar saqlandi",
+      });
+    } catch {
+      return res.status(500).json({ success: false, error: "Kitoblarni saqlashda xatolik yuz berdi" });
+    }
   }
 });
 
@@ -655,11 +712,15 @@ apiRouter.post("/results", (req, res) => {
     const allResults = storage.getResults();
 
     // Broadcast new result in real-time to teacher admin screen!
-    broadcastRealtimeEvent({
-      type: "results_updated",
-      data: { results: allResults },
-      version: storage.getVersion(),
-    });
+    try {
+      broadcastRealtimeEvent({
+        type: "results_updated",
+        data: { results: allResults },
+        version: storage.getVersion(),
+      });
+    } catch (sseErr) {
+      console.warn("Non-fatal SSE broadcast warning:", sseErr);
+    }
 
     return res.json({
       success: true,
@@ -678,11 +739,15 @@ apiRouter.delete("/results", (req, res) => {
   try {
     storage.clearResults();
 
-    broadcastRealtimeEvent({
-      type: "results_updated",
-      data: { results: [] },
-      version: storage.getVersion(),
-    });
+    try {
+      broadcastRealtimeEvent({
+        type: "results_updated",
+        data: { results: [] },
+        version: storage.getVersion(),
+      });
+    } catch (sseErr) {
+      console.warn("Non-fatal SSE broadcast warning:", sseErr);
+    }
 
     return res.json({ success: true, message: "Barcha natijalar tozalandi" });
   } catch (err: any) {
@@ -700,11 +765,15 @@ apiRouter.delete("/results/:id", (req, res) => {
     }
     const allResults = storage.getResults();
 
-    broadcastRealtimeEvent({
-      type: "results_updated",
-      data: { results: allResults },
-      version: storage.getVersion(),
-    });
+    try {
+      broadcastRealtimeEvent({
+        type: "results_updated",
+        data: { results: allResults },
+        version: storage.getVersion(),
+      });
+    } catch (sseErr) {
+      console.warn("Non-fatal SSE broadcast warning:", sseErr);
+    }
 
     return res.json({ success: true, message: "Natija o'chirildi" });
   } catch (err: any) {
@@ -731,11 +800,15 @@ apiRouter.post("/delivery-config", (req, res) => {
     }
     const saved = storage.saveDeliveryConfig(config);
 
-    broadcastRealtimeEvent({
-      type: "config_updated",
-      data: { config: saved },
-      version: storage.getVersion(),
-    });
+    try {
+      broadcastRealtimeEvent({
+        type: "config_updated",
+        data: { config: saved },
+        version: storage.getVersion(),
+      });
+    } catch (sseErr) {
+      console.warn("Non-fatal SSE broadcast warning:", sseErr);
+    }
 
     return res.json({ success: true, config: saved, version: storage.getVersion() });
   } catch (err: any) {

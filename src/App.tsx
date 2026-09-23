@@ -162,11 +162,13 @@ export default function App() {
   const handleUpdateBooks = (newBooks: Book[] | ((prev: Book[]) => Book[])) => {
     setBooks((prev) => {
       const updated = typeof newBooks === 'function' ? newBooks(prev) : newBooks;
-      fetch('/api/books', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ books: updated }),
-      }).catch((err) => console.warn("Could not sync books to server:", err));
+      queueMicrotask(() => {
+        fetch('/api/books', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ books: updated }),
+        }).catch((err) => console.warn("Could not sync books to server:", err));
+      });
       return updated;
     });
   };
@@ -175,11 +177,13 @@ export default function App() {
   const handleUpdateDeliveryConfig = (newConfig: TestDeliveryConfig | ((prev: TestDeliveryConfig) => TestDeliveryConfig)) => {
     setDeliveryConfig((prev) => {
       const updated = typeof newConfig === 'function' ? newConfig(prev) : newConfig;
-      fetch('/api/delivery-config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ config: updated }),
-      }).catch((err) => console.warn("Could not sync delivery config to server:", err));
+      queueMicrotask(() => {
+        fetch('/api/delivery-config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ config: updated }),
+        }).catch((err) => console.warn("Could not sync delivery config to server:", err));
+      });
       return updated;
     });
   };
