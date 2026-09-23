@@ -271,20 +271,26 @@ export function generateAlgorithmicQuestions(
         explanation: `Kitobdagi to'g'ri fakt: «${correctSentence}». Qolgan variantlar boshqa boblar yoki chalg'ituvchi fikrlardir.`,
       });
     } else {
-      // Type 3: Cause and Effect / Logical reasoning
-      const wordsSlice = sentence.split(/\s+/).slice(0, 12).join(' ');
-      const options = shuffle([
-        `Muallif g'oyasining rivoji va asardagi asosiy ziddiyat tufayli`,
-        `Qahramonning ruhiy kechinmalari va shaxsiy qarori natijasida`,
-        `Tashqi muhit va boshqa qahramonlarning kutilmagan bosimi sababli`,
-        `Taqdir taqozosi va vaziyatning noilojligidan kelib chiqib`,
-      ]);
+      // Type 3: Core plot action and outcome
+      const actionSentence = sentence;
+      const cleanAction = actionSentence.length > 90 ? actionSentence.slice(0, 85) + '...' : actionSentence;
+      
+      const charName = characters[mcQuestions.length % characters.length] || "Asar qahramoni";
+      const correctReason = `Ushbu voqea kitob matnidagi: «${cleanAction}» holati bilan bevosita bog'liq`;
+      
+      // Distractors from other parts of the text
+      const dist1 = `Voqealar rivojida bu holat mutlaqo tilga olinmagan va chetlab o'tilgan`;
+      const dist2 = `Qahramonlar bu vaziyatda boshqa tarafning talabini so'zsiz bajargan`;
+      const dist3 = `Bu holat asar syujetining oxirgi tugunida boshqacha yechim topgan`;
+
+      const options = shuffle([correctReason, dist1, dist2, dist3]);
+      const correctOptionIndex = options.indexOf(correctReason);
 
       mcQuestions.push({
-        question: `«${bookTitle}» asaridagi quyidagi tasvirda qanday badiiy-mantiqiy sabab yetakchilik qiladi?\n«${wordsSlice}...»`,
+        question: `«${bookTitle}» asarida keltirilgan quyidagi epizod bo'yicha to'g'ri xulosa qaysi?\n«${cleanAction}»`,
         options,
-        correctOptionIndex: Math.floor(Math.random() * 4),
-        explanation: `Ushbu parchada qahramonlarning ichki motivatsiyasi va voqealar zanjiri badiiy tahlil mezonlariga tayanadi.`,
+        correctOptionIndex: correctOptionIndex >= 0 ? correctOptionIndex : 0,
+        explanation: `Asar matniga ko'ra, «${sentence}» ifodasi to'g'ri dalil hisoblanadi.`,
       });
     }
   }

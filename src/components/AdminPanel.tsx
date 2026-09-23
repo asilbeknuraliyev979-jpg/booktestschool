@@ -35,6 +35,7 @@ import {
   Lock,
   Unlock,
   PlayCircle,
+  X,
 } from 'lucide-react';
 import {
   Book,
@@ -43,11 +44,12 @@ import {
   AIGenerationConfig,
   StudentTestResult,
 } from '../types';
-import { pushAllBooksToFirestore } from '../services/firebase';
+import { pushAllBooksToFirestore, fetchResultsFromFirestore } from '../services/firebase';
 import { safeFetchJson } from '../utils/api';
 import { exportResultsToExcel } from '../utils/excelExport';
 import { extractPdfTextInBrowser } from '../utils/pdfExtractor';
 import { generateAlgorithmicQuestions } from '../utils/algorithmicQuestionGenerator';
+import { parseExternalQuizText } from '../utils/quizTextParser';
 import { StudentAnalyticsDashboard } from './StudentAnalyticsDashboard';
 
 interface AdminPanelProps {
@@ -58,6 +60,7 @@ interface AdminPanelProps {
   results: StudentTestResult[];
   onClearResults: () => void;
   onDeleteResult?: (id: string) => void;
+  onUpdateResults?: (results: StudentTestResult[]) => void;
   onResetToInitialBooks?: () => void;
   adminToken?: string;
 }
@@ -70,6 +73,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   results,
   onClearResults,
   onDeleteResult,
+  onUpdateResults,
   onResetToInitialBooks,
   adminToken,
 }) => {
@@ -91,11 +95,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     totalGenerateCount: 80,
     multipleChoiceGenerateCount: 60,
     writtenGenerateCount: 20,
+    mode: 'notebooklm',
   });
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationStep, setGenerationStep] = useState<string>('');
   const [genError, setGenError] = useState<string | null>(null);
   const [genSuccessMessage, setGenSuccessMessage] = useState<string | null>(null);
+  const [showNotebookLMModal, setShowNotebookLMModal] = useState(false);
+  const [notebookLMText, setNotebookLMText] = useState('');
 
   // --- Edit Questions State ---
   const [selectedBookId, setSelectedBookId] = useState<string>(books[0]?.id || '');
@@ -303,12 +310,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             pdfBase64: !newBookText && pdfBase64 && pdfBase64.length < 3 * 1024 * 1024 ? pdfBase64 : undefined,
             multipleChoiceCount: genConfig.multipleChoiceGenerateCount,
             writtenCount: genConfig.writtenGenerateCount,
+            generationMode: genConfig.mode || 'notebooklm',
           }),
         });
 
         if (resData.success && resData.data && resData.data.multipleChoiceQuestions?.length > 0) {
           rawData = resData.data;
-          modeLabel = resData.data.mode === 'ai' ? 'Gemini AI' : "O'rnatilgan aqlli tahlil (API kalitsiz)";
+          modeLabel = resData.data.mode === 'ai'
+            ? (genConfig.mode === 'pedagogical' ? 'Pedagogik Badiiy AI' : 'Google NotebookLM Manbali AI (Faqat asar faktlari)')
+            : "O'rnatilgan aqlli tahlil (API kalitsiz)";
         }
       } catch (apiError) {
         console.warn("Serverless API unavailable, switching to instant client-side generator:", apiError);
@@ -389,6 +399,50 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       setIsGenerating(false);
       setGenerationStep('');
     }
+  };
+
+  // Import questions directly from Google NotebookLM / Raw text
+  const handleImportNotebookLMQuestions = () => {
+    if (!notebookLMText.trim()) {
+      alert("Iltimos, NotebookLM yoki matnli testlarni kiriting!");
+      return;
+    }
+
+    const parsed = parseExternalQuizText(notebookLMText);
+    const totalFound = parsed.multipleChoiceQuestions.length + parsed.writtenQuestions.length;
+
+    if (totalFound === 0) {
+      alert("Matnda savollar formati aniqlanmadi. Iltimos, standart A, B, C, D variantli yoki yozma savol formatida ekanligini tekshiring.");
+      return;
+    }
+
+    const title = newBookTitle.trim() || "NotebookLM Manbali Test To'plami";
+    const author = newBookAuthor.trim() || "Google NotebookLM";
+    const grade = newBookGrade || "8-sinf";
+
+    const allQuestions = [...parsed.multipleChoiceQuestions, ...parsed.writtenQuestions];
+
+    const newBook: Book = {
+      id: `book-${Date.now()}`,
+      title,
+      author,
+      grade,
+      coverColor: "from-purple-600 to-indigo-900",
+      description: `Google NotebookLM manba matni asosida yuklangan ${parsed.multipleChoiceQuestions.length} ta variantli va ${parsed.writtenQuestions.length} ta yozma savollar to'plami.`,
+      questions: allQuestions,
+      createdAt: new Date().toISOString(),
+      isActive: true,
+    };
+
+    const updated = [newBook, ...books];
+    onUpdateBooks(updated);
+    pushAllBooksToFirestore(updated).catch(() => null);
+    setSelectedBookId(newBook.id);
+    setShowNotebookLMModal(false);
+    setNotebookLMText('');
+    setGenSuccessMessage(
+      `Muvaffaqiyatli! Google NotebookLM dan jami ${totalFound} ta savol (${parsed.multipleChoiceQuestions.length} ta variantli, ${parsed.writtenQuestions.length} ta yozma) qabul qilindi va "${title}" nomi bilan saqlandi!`
+    );
   };
 
   // Add Question Manually
@@ -548,14 +602,24 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     e.target.value = '';
   };
 
-  // Filtered results
+  const normalizeGrade = (str: string) =>
+    (str || '').toLowerCase().replace(/sinf/gi, '').replace(/[^0-9a-zа-яёўқғҳ]/gi, '').trim();
+
+  // Filtered results with resilient class matching
   const filteredResults = results.filter((r) => {
-    const matchName = r.studentName.toLowerCase().includes(searchStudent.toLowerCase());
+    const matchName = (r.studentName || '').toLowerCase().includes(searchStudent.toLowerCase().trim());
+    if (filterClass === 'all') return matchName;
+
+    const studentGradeNorm = normalizeGrade(r.studentGrade);
+    const filterGradeNorm = normalizeGrade(filterClass);
+
+    // E.g. "8-A sinf" vs "8-A" -> norm: "8a" vs "8a" (exact match)
+    // E.g. "8-A sinf" vs "8" -> norm: "8a" startsWith "8"
     const matchClass =
-      filterClass === 'all' ||
-      (filterClass.includes('-')
-        ? r.studentGrade.toLowerCase().trim() === filterClass.toLowerCase().trim()
-        : r.studentGrade.toLowerCase().startsWith(filterClass.toLowerCase()));
+      studentGradeNorm === filterGradeNorm ||
+      studentGradeNorm.startsWith(filterGradeNorm) ||
+      (r.studentGrade || '').toLowerCase().includes(filterClass.toLowerCase());
+
     return matchName && matchClass;
   });
 
@@ -563,11 +627,60 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [isPushingServer, setIsPushingServer] = useState(false);
   const [syncBanner, setSyncBanner] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
-  // Pull latest data from central server
+  const [isRefreshingResults, setIsRefreshingResults] = useState(false);
+
+  // Manual refresh of student results from Google Firebase Firestore
+  const handleRefreshResults = async () => {
+    setIsRefreshingResults(true);
+    try {
+      const firestoreResults = await fetchResultsFromFirestore();
+      if (firestoreResults && firestoreResults.length > 0 && onUpdateResults) {
+        onUpdateResults(firestoreResults);
+        setSyncBanner({
+          type: 'success',
+          message: `Firebase'dan ${firestoreResults.length} ta o'quvchi natijasi yangilandi!`,
+        });
+      } else {
+        // Fallback to server API
+        const res = await fetch('/api/results');
+        const data = await res.json().catch(() => null);
+        if (data?.success && Array.isArray(data.results) && onUpdateResults) {
+          onUpdateResults(data.results);
+          setSyncBanner({
+            type: 'success',
+            message: `Serverdan ${data.results.length} ta natija yuklandi.`,
+          });
+        } else {
+          setSyncBanner({
+            type: 'success',
+            message: `Hozircha bazada ${results.length} ta natija mavjud.`,
+          });
+        }
+      }
+    } catch (err) {
+      console.warn("Refresh results warning:", err);
+      setSyncBanner({
+        type: 'error',
+        message: "Natijalarni yangilashda xatolik yuz berdi.",
+      });
+    } finally {
+      setIsRefreshingResults(false);
+      setTimeout(() => setSyncBanner(null), 4000);
+    }
+  };
+
+  // Pull latest data from central server & Firestore
   const handleSyncWithServer = async () => {
     setIsSyncingServer(true);
     setSyncBanner(null);
     try {
+      // 1. Sync Results from Firestore
+      const firestoreResults = await fetchResultsFromFirestore();
+      if (firestoreResults && firestoreResults.length > 0 && onUpdateResults) {
+        onUpdateResults(firestoreResults);
+      }
+
+      // 2. Sync Books from server
       const res = await fetch('/api/books');
       const data = await res.json().catch(() => null);
 
@@ -575,7 +688,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         onUpdateBooks(data.books);
         setSyncBanner({
           type: 'success',
-          message: `Markaziy server bilan muvaffaqiyatli sinxronlandi! Jami ${data.books.length} ta kitob testi mavjud.`,
+          message: `Markaziy server va Firebase bilan muvaffaqiyatli sinxronlandi! (${data.books.length} ta kitob, ${firestoreResults?.length || results.length} ta natija)`,
         });
       } else if (books.length > 0) {
         // If server needs current state, synchronize seamlessly
@@ -1186,6 +1299,73 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </div>
           </div>
 
+          {/* AI Generation Engine Mode (NotebookLM vs Pedagogical) */}
+          <div className="p-4 bg-gradient-to-r from-purple-50 via-indigo-50 to-blue-50 border border-indigo-200/80 rounded-2xl space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-purple-600 animate-pulse" />
+                <h4 className="text-xs font-extrabold text-slate-800 uppercase tracking-wider">
+                  AI Savol Yaratish Dvigateli & Metodikasi:
+                </h4>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowNotebookLMModal(true)}
+                className="px-3 py-1.5 bg-white hover:bg-purple-100 text-purple-700 border border-purple-300 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm"
+              >
+                <FileText className="w-3.5 h-3.5" />
+                <span>Google NotebookLM dan Testlarni Import Qilish</span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+              <div
+                onClick={() => setGenConfig({ ...genConfig, mode: 'notebooklm' })}
+                className={`p-3.5 rounded-xl border-2 cursor-pointer transition-all ${
+                  genConfig.mode !== 'pedagogical'
+                    ? 'border-purple-600 bg-white shadow-sm ring-2 ring-purple-100'
+                    : 'border-slate-200 bg-white/60 hover:bg-white'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-base">🌟</span>
+                    <span className="font-extrabold text-xs text-purple-950">
+                      Google NotebookLM Uslubi (Strict Source-Grounded)
+                    </span>
+                  </div>
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-purple-100 text-purple-800">
+                    Tavsiya etiladi
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-600 leading-relaxed">
+                  Faqat yuklangan kitob/PDF matnidagi <strong>aniq faktlar, asosiy voqealar va sabab-oqibatlarga</strong> tayanadi. To'qimalar yo'q, chalg'ituvchi variantlar ham kitob voqealaridan olinadi.
+                </p>
+              </div>
+
+              <div
+                onClick={() => setGenConfig({ ...genConfig, mode: 'pedagogical' })}
+                className={`p-3.5 rounded-xl border-2 cursor-pointer transition-all ${
+                  genConfig.mode === 'pedagogical'
+                    ? 'border-blue-600 bg-white shadow-sm ring-2 ring-blue-100'
+                    : 'border-slate-200 bg-white/60 hover:bg-white'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-base">🎓</span>
+                    <span className="font-extrabold text-xs text-blue-950">
+                      Pedagogik Adabiy Tahlil AI
+                    </span>
+                  </div>
+                </div>
+                <p className="text-[11px] text-slate-600 leading-relaxed">
+                  Qahramonlarning ruhiy olami, badiiy timsollar, falsafiy ma'no va adabiyot darsi mezonlariga mos chuqur savollar tuzadi.
+                </p>
+              </div>
+            </div>
+          </div>
+
           {/* AI Generator Settings (Admin can modify!) */}
           <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
             <div className="flex items-center justify-between">
@@ -1740,12 +1920,23 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               </p>
             </div>
 
-            {/* Excel Download Button */}
-            <div className="flex items-center gap-2">
+            {/* Action Buttons: Refresh & Excel Download */}
+            <div className="flex flex-wrap items-center gap-2">
               <button
+                type="button"
+                onClick={handleRefreshResults}
+                disabled={isRefreshingResults}
+                className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl font-bold text-xs sm:text-sm flex items-center gap-2 transition-all shadow-sm"
+              >
+                <RefreshCw className={`w-4 h-4 ${isRefreshingResults ? 'animate-spin' : ''}`} />
+                <span>{isRefreshingResults ? "Yangilanmoqda..." : "Firebase'dan Natijalarni Yangilash"}</span>
+              </button>
+
+              <button
+                type="button"
                 onClick={() => exportResultsToExcel(results)}
                 disabled={results.length === 0}
-                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white rounded-xl font-bold text-xs sm:text-sm flex items-center gap-2 transition-all shadow-sm"
+                className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white rounded-xl font-bold text-xs sm:text-sm flex items-center gap-2 transition-all shadow-sm"
               >
                 <FileSpreadsheet className="w-4 h-4" />
                 <span>Excel yuklab olish (.xlsx)</span>
@@ -1877,10 +2068,24 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
             {/* Results Table */}
             {filteredResults.length === 0 ? (
-              <div className="p-8 text-center text-slate-500 border border-dashed border-slate-200 rounded-xl text-xs">
-                {results.length === 0
-                  ? "Hozircha natijalar mavjud emas. O'quvchilar test topshirgach bu yerda barcha ma'lumotlar ko'rinadi."
-                  : "Qidiruv bo'yicha mos keladigan o'quvchi topilmadi."}
+              <div className="p-8 text-center text-slate-500 border border-dashed border-slate-200 rounded-2xl text-xs space-y-3">
+                <p className="font-medium text-slate-600">
+                  {results.length === 0
+                    ? "Hozircha natijalar mavjud emas. O'quvchilar test topshirgach bu yerda barcha ma'lumotlar ko'rinadi."
+                    : `Jami bazada ${results.length} ta natija mavjud, ammo tanlangan filtr (sinf: "${filterClass}", qidiruv: "${searchStudent}") bo'yicha mos keladigan o'quvchi topilmadi.`}
+                </p>
+                {results.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFilterClass('all');
+                      setSearchStudent('');
+                    }}
+                    className="px-3.5 py-1.5 bg-blue-100 text-blue-800 font-bold rounded-xl hover:bg-blue-200 transition-colors shadow-2xs"
+                  >
+                    Barcha filtrlarni tozalash ({results.length} ta o'quvchi natijasini ko'rish)
+                  </button>
+                )}
               </div>
             ) : (
               <div className="overflow-x-auto rounded-xl border border-slate-200">
@@ -2409,6 +2614,121 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                   <span>Barcha natijalarni tozalash</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Google NotebookLM & External AI Quick Text Importer */}
+      {showNotebookLMModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="p-6 bg-gradient-to-r from-purple-700 via-indigo-700 to-blue-700 text-white flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-white/20 rounded-2xl">
+                  <Sparkles className="w-6 h-6 text-amber-300" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-lg tracking-tight">
+                    Google NotebookLM dan Testlarni Import Qilish
+                  </h3>
+                  <p className="text-xs text-purple-100">
+                    NotebookLM yoki istalgan AI'da yaratilgan test matnini shu yerga qo'ying
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowNotebookLMModal(false)}
+                className="p-1.5 rounded-full hover:bg-white/20 text-white transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="p-3.5 bg-purple-50 rounded-2xl border border-purple-200 text-xs text-purple-900 space-y-1.5">
+                <div className="font-bold flex items-center gap-1.5">
+                  <CheckCircle2 className="w-4 h-4 text-purple-600" />
+                  <span>Qanday ishlaydi?</span>
+                </div>
+                <p className="leading-relaxed">
+                  1. <a href="https://notebooklm.google.com" target="_blank" rel="noopener noreferrer" className="underline font-bold text-purple-800">notebooklm.google.com</a> ga kitobingiz PDF'ini yuklang.<br />
+                  2. NotebookLM chatida: <em>"Ushbu kitob bo'yicha 60 ta A, B, C, D variantli va 20 ta yozma test savollari tuzib ber"</em> deb yozing.<br />
+                  3. Chiqqan savollarni nusxalab oling va quyidagi maydonga joylashtiring. Tizim ularni 1 soniyada avtomatik tahlil qilib bazaga saqlaydi!
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Kitob nomi:</label>
+                  <input
+                    type="text"
+                    value={newBookTitle}
+                    onChange={(e) => setNewBookTitle(e.target.value)}
+                    placeholder="Masalan: Kecha va kunduz"
+                    className="w-full px-3 py-2 text-xs rounded-xl border border-slate-300 focus:outline-none focus:border-purple-600"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Muallif:</label>
+                  <input
+                    type="text"
+                    value={newBookAuthor}
+                    onChange={(e) => setNewBookAuthor(e.target.value)}
+                    placeholder="Masalan: Cho'lpon"
+                    className="w-full px-3 py-2 text-xs rounded-xl border border-slate-300 focus:outline-none focus:border-purple-600"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Sinf:</label>
+                  <select
+                    value={newBookGrade}
+                    onChange={(e) => setNewBookGrade(e.target.value)}
+                    className="w-full px-3 py-2 text-xs rounded-xl border border-slate-300 bg-white focus:outline-none focus:border-purple-600"
+                  >
+                    <option value="5-sinf">5-sinf</option>
+                    <option value="6-sinf">6-sinf</option>
+                    <option value="7-sinf">7-sinf</option>
+                    <option value="8-sinf">8-sinf</option>
+                    <option value="9-sinf">9-sinf</option>
+                    <option value="10-sinf">10-sinf</option>
+                    <option value="11-sinf">11-sinf</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  NotebookLM dan nusxalangan test matni:
+                </label>
+                <textarea
+                  value={notebookLMText}
+                  onChange={(e) => setNotebookLMText(e.target.value)}
+                  placeholder={`1. Otabek Marg'ilonga qaysi maqsadda kelgan edi?\nA) Sayr qilish\nB) Savdo ishlari bilan\nC) O'qishga kirish\nD) Qarindoshlarini ko'rish\nJavob: B\nIzoh: Otabek savdo karvoni bilan kelgan edi.\n\n2. ...`}
+                  rows={9}
+                  className="w-full p-3 font-mono text-xs rounded-2xl border border-slate-300 focus:outline-none focus:border-purple-600 leading-relaxed"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowNotebookLMModal(false)}
+                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors"
+                >
+                  Bekor qilish
+                </button>
+                <button
+                  type="button"
+                  onClick={handleImportNotebookLMQuestions}
+                  disabled={!notebookLMText.trim()}
+                  className="px-5 py-2.5 text-xs font-bold text-white bg-purple-600 hover:bg-purple-700 disabled:opacity-50 rounded-xl flex items-center gap-2 shadow-sm transition-all"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  <span>Testlarni Qabul Qilish va Saqlash</span>
                 </button>
               </div>
             </div>

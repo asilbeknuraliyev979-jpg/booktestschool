@@ -350,6 +350,7 @@ export const StudentQuizView: React.FC<StudentQuizViewProps> = ({
       writtenTotal: deliveryConfig.writtenCount,
       durationSeconds: testDuration > 0 ? testDuration : 1,
       completedAt: new Date().toISOString(),
+      submittedAt: Date.now(),
       gradeBadge,
       terminatedReason: reason,
       details,

@@ -121,7 +121,7 @@ apiRouter.post("/admin/logout", (req, res) => {
 // Sleep helper
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// Helper to run question generation for a slice
+// Helper to run question generation for a slice (NotebookLM & Strict Source-Grounded)
 async function generateQuestionBatch(
   ai: GoogleGenAI,
   bookTitle: string,
@@ -130,37 +130,56 @@ async function generateQuestionBatch(
   contentSlice: string,
   mcCount: number,
   wrCount: number,
-  batchTheme: string
+  batchTheme: string,
+  generationMode: 'notebooklm' | 'pedagogical' = 'notebooklm'
 ): Promise<{ multipleChoiceQuestions: any[]; writtenQuestions: any[] }> {
-  const prompt = `Siz maktab ta'limi va o'zbek adabiyoti bo'yicha oliy toifali ekspert, professional testolog va metodistsiz.
-Quyida taqdim etilgan kitob asari matni asosida o'quvchilar uchun YUQORI SAVIYALI, PROFESSIONAL TEST SAVOLLARI tuzing.
+  const isNotebookLM = generationMode === 'notebooklm';
+
+  const prompt = isNotebookLM
+    ? `Siz Google NotebookLM arxitekturasida ishlovchi, MANBAGA QAT'IY TAYANUVCHI (STRICT SOURCE-GROUNDED), oliy toifali akademik testolog va metodistsiz.
+Sizning yagona va mutlaq vazifangiz — faqat va faqat quyidagi berilgan kitob asari matnidan ASOSIY VA ENG MUHIM FAKTLAR, VOQEALAR VA SABAB-OQIBATLARNI ajratib olib, 100% matnga tayangan PROFESSIONAL TEST SAVOLLARI tuzishdir.
 
 Kitob ma'lumotlari:
 - Kitob nomi: "${bookTitle}"
 - Muallif: "${author || "Muallif"}"
-- Tavsiya etilgan sinf: "${grade || "Maktab"}"
-- Fokus/Boblar: "${batchTheme}"
+- Sinf: "${grade || "Maktab"}"
+- Fokus/Qism: "${batchTheme}"
 
-MUTLAQ TALABLAR VA PROFESSIONAL MEZONLAR:
-1. SAVOLLARNING YUQORI SAVIYASI:
-   - Savollar yuzaki bo'lmasin. Syujet ziddiyatlari, qahramonlarning ruhiy olami, xarakterlari, motivatsiyasi va muallif g'oyasini qamrasin.
-2. CHALG'ITUVCHI VARIANTLAR BIR-BIRIGA JUDA YAQIN BO'LSIN:
+NOTEBOOKLM STANDARTIDAGI QAT'IY TALABLAR (MUTLAQ MEZONLAR):
+1. ZERO HALLUCINATION (TO'QIMA YO'Q):
+   - Savollar, to'g'ri javoblar va barcha variantlar FAQAT VA FAQAT quyida keltirilgan matn parchasida mavjud bo'lgan aniq faktlar, qahramonlar, voqealar va jumlalarga asoslanishi SHART.
+   - Matnda bo'lmagan tashqi ma'lumotlarni o'zingizdan to'qimang.
+2. ASOSIY MA'LUMOTLAR VA MAZMUN:
+   - Savollar ikkinchi darajali keraksiz mayda-chuydalar emas, balki asarning ASOSIY SYUJETI, kulminatsiyasi, qahramonlarning hal qiluvchi qarorlari, sabab-oqibatlari va muallifning markaziy g'oyasiga qaratilsin.
+3. CHALG'ITUVCHI VARIANTLAR (A, B, C, D) SIFATI:
    - 4 ta variant (A, B, C, D) bir-biriga JUDA YAQIN, mantiqiy va ishonarli bo'lsin.
-   - O'quvchi kitobni sinchiklab o'qimagan bo'lsa, shunchaki taxmin qila olmasin.
-   - Noto'g'ri variantlar kitobdagi boshqa o'xshash voqealar yoki qahramonlar xatti-harakatlariga asoslansin.
-3. YOZMA SAVOLLAR:
-   - O'quvchidan asar voqealari va sabab-oqibatlari bo'yicha mazmunli javob talab etilsin.
-   - Har bir yozma savol uchun to'g'ri etalon javob (expectedAnswer) va tekshirish uchun 2-4 ta kalit so'z (keywords) berilsin.
-4. MIQDOR:
-   - Aynan ${mcCount} ta variantli savol (A, B, C, D; bittasi to'g'ri).
-   - Aynan ${wrCount} ta javobi yoziladigan savol.
+   - Noto'g'ri variantlar (chalg'ituvchilar) ham aynan shu asar matnidagi boshqa epizodlar va voqealarga asoslansin, toki asarni sinchiklab o'qimagan o'quvchi shunchaki taxmin qila olmasin.
+   - correctOptionIndex 0 dan 3 gacha butun son bo'lsin (0=A, 1=B, 2=C, 3=D). To'g'ri javoblar tasodifiy har xil harflarga teng taqsimlansin.
+4. YOZMA SAVOLLAR:
+   - O'quvchidan asar voqealari va sabab-oqibatlari bo'yicha aniq fikr talab qilinsin.
+   - expectedAnswer: Asosiy etalon javob (matndan olingan fakt bilan).
+   - keywords: Javobni tekshirish uchun matndagi 2-4 ta kalit so'z.
+5. ANIQ MIQDOR:
+   - Aynan ${mcCount} ta variantli savol (A, B, C, D).
+   - Aynan ${wrCount} ta yozma savol.
+
+MANBA MATN (FAQAT SHU MATNDAN FOYDALANING):
+"""
+${contentSlice}
+"""`
+    : `Siz maktab ta'limi va o'zbek adabiyoti bo'yicha oliy toifali ekspert, professional pedagogik testologsiz.
+Quyida taqdim etilgan kitob asari matni asosida qahramonlar psixologiyasi, syujet ziddiyatlari va badiiy g'oyani tekshiruvchi ${mcCount} ta variantli va ${wrCount} ta yozma savol tuzing.
+
+Kitob: "${bookTitle}" (${author}), Sinf: "${grade}".
+Fokus: "${batchTheme}".
+4 ta variant bir-biriga juda yaqin, chalg'ituvchi va chuqur tahliliy bo'lsin.
 
 Matn:
 """
 ${contentSlice}
 """`;
 
-  const modelsToTry = ["gemini-3.1-flash-lite", "gemini-3.8-flash"];
+  const modelsToTry = ["gemini-2.5-flash", "gemini-3.8-flash", "gemini-3.1-flash-lite"];
   for (const modelName of modelsToTry) {
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
@@ -169,7 +188,7 @@ ${contentSlice}
           contents: prompt,
           config: {
             systemInstruction:
-              "Siz O'zbekiston Respublikasi maktab ta'limi bo'yicha oliy toifali testolog-ekspertsiz. Kitoblar bo'yicha chuqur saviyali, variantlari bir-biriga nihoyatda yaqin, chalg'ituvchi pedagogik testlar tuzasiz. Faqat JSON formatda javob bering.",
+              "Siz Google NotebookLM tamoyillari asosida ishlovchi, faqat taqdim etilgan manbaga qat'iy tayanuvchi (Strict Source-Grounded) oliy toifali testolog-ekspertsiz. Matndan tashqaridagi to'qimalarga yo'l qo'ymaysiz. Faqat JSON formatda javob bering.",
             responseMimeType: "application/json",
             responseSchema: {
               type: Type.OBJECT,
@@ -238,12 +257,14 @@ apiRouter.post("/generate-questions", requireAdminAuth, async (req, res) => {
       bookText,
       multipleChoiceCount = 60,
       writtenCount = 20,
+      generationMode = 'notebooklm',
     } = req.body;
 
     const safeTitle = sanitizeInput(bookTitle, 200);
     const safeAuthor = sanitizeInput(author, 200);
     const safeGrade = sanitizeInput(grade, 100);
     const finalContent = sanitizeInput(bookText || "", 2000000);
+    const safeMode: 'notebooklm' | 'pedagogical' = generationMode === 'pedagogical' ? 'pedagogical' : 'notebooklm';
 
     if (!safeTitle) {
       return res.status(400).json({
@@ -306,7 +327,8 @@ apiRouter.post("/generate-questions", requireAdminAuth, async (req, res) => {
           part1,
           halfMC,
           halfWritten,
-          "Kitobning 1-qismi, qahramonlar tanishuvi, asar ekspozitsiyasi va asosiy voqealar boshlanishi"
+          "Kitobning 1-qismi, qahramonlar tanishuvi, asar ekspozitsiyasi va asosiy voqealar boshlanishi",
+          safeMode
         );
 
         const batch2 = await generateQuestionBatch(
@@ -317,7 +339,8 @@ apiRouter.post("/generate-questions", requireAdminAuth, async (req, res) => {
           part2.length > 50 ? part2 : part1,
           remainingMC,
           remainingWritten,
-          "Kitobning 2-qismi, kulminatsiya, qahramonlar fojiasi/yechimi, falsafiy ma'no va muallif xulosasi"
+          "Kitobning 2-qismi, kulminatsiya, qahramonlar fojiasi/yechimi, falsafiy ma'no va muallif xulosasi",
+          safeMode
         );
 
         allMC = [...batch1.multipleChoiceQuestions, ...batch2.multipleChoiceQuestions];
@@ -331,7 +354,8 @@ apiRouter.post("/generate-questions", requireAdminAuth, async (req, res) => {
           finalContent.slice(0, 35000),
           Number(multipleChoiceCount),
           Number(writtenCount),
-          "Butun kitob bo'yicha to'liq savollar to'plami"
+          "Butun kitob bo'yicha to'liq savollar to'plami",
+          safeMode
         );
         allMC = singleBatch.multipleChoiceQuestions;
         allWritten = singleBatch.writtenQuestions;

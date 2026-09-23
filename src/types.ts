@@ -45,6 +45,7 @@ export interface AIGenerationConfig {
   totalGenerateCount: number; // e.g. 80
   multipleChoiceGenerateCount: number; // e.g. 60
   writtenGenerateCount: number; // e.g. 20
+  mode?: 'notebooklm' | 'pedagogical'; // NotebookLM strictly source-grounded or deep pedagogical
 }
 
 export interface StudentInfo {

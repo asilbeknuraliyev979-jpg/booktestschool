@@ -10,6 +10,7 @@ import { INITIAL_BOOKS } from './data/initialBooks';
 import {
   subscribeToBooks,
   subscribeToResults,
+  fetchResultsFromFirestore,
   subscribeToDeliveryConfig,
   pushAllBooksToFirestore,
   saveResultToFirestore,
@@ -94,8 +95,23 @@ export default function App() {
 
   // Global Real-time Multi-Computer Synchronization (Google Firebase Firestore + SSE Backup)
   useEffect(() => {
-    // 1. Initial Firestore connection test
+    // 1. Initial Firestore connection test and immediate results load
     testFirestoreConnection();
+    fetchResultsFromFirestore().then((initialResults) => {
+      if (Array.isArray(initialResults) && initialResults.length > 0) {
+        setResults((prev) => {
+          // Merge or set newest results
+          const map = new Map<string, StudentTestResult>();
+          initialResults.forEach((r) => map.set(r.id, r));
+          prev.forEach((r) => { if (!map.has(r.id)) map.set(r.id, r); });
+          return Array.from(map.values()).sort((a, b) => {
+            const timeA = a.submittedAt || (a.completedAt ? new Date(a.completedAt).getTime() : 0);
+            const timeB = b.submittedAt || (b.completedAt ? new Date(b.completedAt).getTime() : 0);
+            return timeB - timeA;
+          });
+        });
+      }
+    }).catch((err) => console.warn("Initial results fetch warning:", err));
 
     // 2. Firebase Firestore Real-Time Subscriptions (Master Global Source)
     const unsubscribeBooks = subscribeToBooks((firestoreBooks) => {
@@ -415,6 +431,7 @@ export default function App() {
             results={results}
             onClearResults={handleClearResults}
             onDeleteResult={handleDeleteResult}
+            onUpdateResults={setResults}
             onResetToInitialBooks={() => handleUpdateBooks(INITIAL_BOOKS)}
             adminToken={adminToken || undefined}
           />

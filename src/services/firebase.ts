@@ -149,6 +149,23 @@ export async function deleteBookFromFirestore(bookId: string): Promise<void> {
   await deleteDoc(bookRef);
 }
 
+// Helper to recursively remove undefined fields which Firestore rejects
+export function cleanForFirestore<T>(data: T): T {
+  if (data === undefined) return null as any;
+  if (data === null || typeof data !== 'object') return data;
+  if (data instanceof Date) return data.toISOString() as any;
+  if (Array.isArray(data)) {
+    return data.map((item) => cleanForFirestore(item)) as any;
+  }
+  const result: Record<string, any> = {};
+  for (const [key, value] of Object.entries(data as Record<string, any>)) {
+    if (value !== undefined) {
+      result[key] = cleanForFirestore(value);
+    }
+  }
+  return result as T;
+}
+
 // -------------------------------------------------------------
 // Real-time Test Results Subscription
 // -------------------------------------------------------------
@@ -157,41 +174,102 @@ export function subscribeToResults(
   onError?: (err: Error) => void
 ): () => void {
   const resultsCol = collection(db, 'results');
-  const q = query(resultsCol, orderBy('submittedAt', 'desc'));
 
+  // Direct collection snapshot avoids index missing errors and handles all document versions
   return onSnapshot(
-    q,
+    resultsCol,
     (snapshot) => {
       const results: StudentTestResult[] = [];
       snapshot.forEach((docSnap) => {
-        results.push(docSnap.data() as StudentTestResult);
+        const data = docSnap.data() as StudentTestResult;
+        results.push({
+          ...data,
+          id: docSnap.id,
+        });
       });
+
+      // Sort by newest first (using submittedAt or completedAt)
+      results.sort((a, b) => {
+        const timeA = a.submittedAt || (a.completedAt ? new Date(a.completedAt).getTime() : 0);
+        const timeB = b.submittedAt || (b.completedAt ? new Date(b.completedAt).getTime() : 0);
+        return timeB - timeA;
+      });
+
+      console.log(`[Firebase] Results updated: ${results.length} total results loaded`);
       onUpdate(results);
     },
     (error) => {
-      // Fallback query without orderBy if index is not ready yet
-      console.warn("Results ordered query warning, falling back to standard collection:", error);
-      return onSnapshot(resultsCol, (snapshot) => {
-        const fallbackResults: StudentTestResult[] = [];
-        snapshot.forEach((docSnap) => {
-          fallbackResults.push(docSnap.data() as StudentTestResult);
-        });
-        fallbackResults.sort((a, b) => (b.submittedAt || 0) - (a.submittedAt || 0));
-        onUpdate(fallbackResults);
-      }, onError);
+      console.warn("Firestore results subscription error:", error);
+      if (onError) onError(error);
     }
   );
 }
 
+// Fetch all results once (for immediate fallback/initial sync)
+export async function fetchResultsFromFirestore(): Promise<StudentTestResult[]> {
+  try {
+    const resultsCol = collection(db, 'results');
+    const snapshot = await getDocs(resultsCol);
+    const results: StudentTestResult[] = [];
+    snapshot.forEach((docSnap) => {
+      const data = docSnap.data() as StudentTestResult;
+      results.push({
+        ...data,
+        id: docSnap.id,
+      });
+    });
+    results.sort((a, b) => {
+      const timeA = a.submittedAt || (a.completedAt ? new Date(a.completedAt).getTime() : 0);
+      const timeB = b.submittedAt || (b.completedAt ? new Date(b.completedAt).getTime() : 0);
+      return timeB - timeA;
+    });
+    return results;
+  } catch (err) {
+    console.warn("fetchResultsFromFirestore error:", err);
+    return [];
+  }
+}
+
 // Save a student test result globally
 export async function saveResultToFirestore(result: StudentTestResult): Promise<void> {
-  const cleanId = result.id || `res-${Date.now()}`;
-  const resultRef = doc(db, 'results', cleanId);
-  await setDoc(resultRef, {
-    ...result,
-    id: cleanId,
-    submittedAt: result.submittedAt || Date.now(),
-  });
+  try {
+    const cleanId = result.id || `res-${Date.now()}`;
+    const resultRef = doc(db, 'results', cleanId);
+    
+    // Clean all undefined fields before sending to Firestore
+    const sanitizedData = cleanForFirestore({
+      ...result,
+      id: cleanId,
+      studentName: (result.studentName || '').trim(),
+      studentGrade: (result.studentGrade || '').trim(),
+      bookId: result.bookId || '',
+      bookTitle: result.bookTitle || '',
+      score: Number(result.score) || 0,
+      totalQuestions: Number(result.totalQuestions) || 0,
+      percentage: Number(result.percentage) || 0,
+      completedAt: result.completedAt || new Date().toISOString(),
+      submittedAt: result.submittedAt || Date.now(),
+      gradeBadge: result.gradeBadge || '2 (Qoniqarsiz)',
+      details: Array.isArray(result.details)
+        ? result.details.map((d) => ({
+            questionId: d.questionId || '',
+            questionText: d.questionText || '',
+            type: d.type || 'multiple-choice',
+            studentAnswer: d.studentAnswer || '',
+            correctAnswer: d.correctAnswer || '',
+            isCorrect: !!d.isCorrect,
+            explanation: d.explanation || '',
+            aiFeedback: d.aiFeedback || '',
+          }))
+        : [],
+    });
+
+    await setDoc(resultRef, sanitizedData, { merge: true });
+    console.log(`[Firebase] Test result successfully saved to Firestore: ${cleanId}`);
+  } catch (err) {
+    console.error("[Firebase] Error saving test result to Firestore:", err);
+    throw err;
+  }
 }
 
 // Delete a single student result
