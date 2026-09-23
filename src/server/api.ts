@@ -1,5 +1,6 @@
 import express from "express";
 import { GoogleGenAI, Type } from "@google/genai";
+import { generateAlgorithmicQuestions } from "../utils/algorithmicQuestionGenerator";
 import {
   authenticateAdmin,
   verifySessionToken,
@@ -25,24 +26,27 @@ const evaluateRateLimiter = createRateLimiter({
   message: "Javoblarni tekshirish so'rovlari limiti oshdi. Biroz kuting.",
 });
 
-// Lazy init GenAI
+// Lazy init GenAI (Optional: app works seamlessly with or without GEMINI_API_KEY)
 let aiClient: GoogleGenAI | null = null;
-function getGenAI(): GoogleGenAI {
+function getGenAI(): GoogleGenAI | null {
   const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error(
-      "GEMINI_API_KEY sozlanmagan. Vercel Settings -> Environment Variables bo'limida GEMINI_API_KEY o'zgaruvchisini yarating va loyihani Redeploy qiling."
-    );
+  if (!apiKey || apiKey.trim().length === 0) {
+    return null;
   }
   if (!aiClient) {
-    aiClient = new GoogleGenAI({
-      apiKey,
-      httpOptions: {
-        headers: {
-          "User-Agent": "aistudio-build",
+    try {
+      aiClient = new GoogleGenAI({
+        apiKey: apiKey.trim(),
+        httpOptions: {
+          headers: {
+            "User-Agent": "aistudio-build",
+          },
         },
-      },
-    });
+      });
+    } catch (e) {
+      console.warn("Could not initialize GenAI client:", e);
+      return null;
+    }
   }
   return aiClient;
 }
@@ -252,67 +256,114 @@ apiRouter.post("/generate-questions", requireAdminAuth, async (req, res) => {
     }
 
     const ai = getGenAI();
+
+    // 1. If GEMINI_API_KEY is not configured, seamlessly generate using the built-in smart algorithmic generator
+    if (!ai) {
+      console.log("No GEMINI_API_KEY configured. Generating high-quality questions algorithmically from text.");
+      const algorithmicResult = generateAlgorithmicQuestions(
+        safeTitle,
+        safeAuthor,
+        safeGrade,
+        finalContent,
+        Number(multipleChoiceCount),
+        Number(writtenCount)
+      );
+
+      return res.json({
+        success: true,
+        data: {
+          multipleChoiceQuestions: algorithmicResult.multipleChoiceQuestions,
+          writtenQuestions: algorithmicResult.writtenQuestions,
+          mode: 'algorithmic'
+        },
+        notice: "Savollar o'rnatilgan aqlli lingvistik algoritm orqali (API kalitsiz) yaratildi."
+      });
+    }
+
     const totalCount = Number(multipleChoiceCount) + Number(writtenCount);
 
     let allMC: any[] = [];
     let allWritten: any[] = [];
 
-    if (totalCount > 35) {
-      const halfMC = Math.ceil(Number(multipleChoiceCount) / 2);
-      const remainingMC = Number(multipleChoiceCount) - halfMC;
-      const halfWritten = Math.ceil(Number(writtenCount) / 2);
-      const remainingWritten = Number(writtenCount) - halfWritten;
+    try {
+      if (totalCount > 35) {
+        const halfMC = Math.ceil(Number(multipleChoiceCount) / 2);
+        const remainingMC = Number(multipleChoiceCount) - halfMC;
+        const halfWritten = Math.ceil(Number(writtenCount) / 2);
+        const remainingWritten = Number(writtenCount) - halfWritten;
 
-      const midPoint = Math.floor(finalContent.length / 2);
-      const part1 = finalContent.slice(0, Math.min(midPoint + 2000, 35000));
-      const part2 = finalContent.slice(Math.max(0, midPoint - 2000), Math.min(finalContent.length, midPoint + 35000));
+        const midPoint = Math.floor(finalContent.length / 2);
+        const part1 = finalContent.slice(0, Math.min(midPoint + 2000, 35000));
+        const part2 = finalContent.slice(Math.max(0, midPoint - 2000), Math.min(finalContent.length, midPoint + 35000));
 
-      const batch1 = await generateQuestionBatch(
-        ai,
+        const batch1 = await generateQuestionBatch(
+          ai,
+          safeTitle,
+          safeAuthor,
+          safeGrade,
+          part1,
+          halfMC,
+          halfWritten,
+          "Kitobning 1-qismi, qahramonlar tanishuvi, asar ekspozitsiyasi va asosiy voqealar boshlanishi"
+        );
+
+        const batch2 = await generateQuestionBatch(
+          ai,
+          safeTitle,
+          safeAuthor,
+          safeGrade,
+          part2.length > 50 ? part2 : part1,
+          remainingMC,
+          remainingWritten,
+          "Kitobning 2-qismi, kulminatsiya, qahramonlar fojiasi/yechimi, falsafiy ma'no va muallif xulosasi"
+        );
+
+        allMC = [...batch1.multipleChoiceQuestions, ...batch2.multipleChoiceQuestions];
+        allWritten = [...batch1.writtenQuestions, ...batch2.writtenQuestions];
+      } else {
+        const singleBatch = await generateQuestionBatch(
+          ai,
+          safeTitle,
+          safeAuthor,
+          safeGrade,
+          finalContent.slice(0, 35000),
+          Number(multipleChoiceCount),
+          Number(writtenCount),
+          "Butun kitob bo'yicha to'liq savollar to'plami"
+        );
+        allMC = singleBatch.multipleChoiceQuestions;
+        allWritten = singleBatch.writtenQuestions;
+      }
+
+      return res.json({
+        success: true,
+        data: {
+          multipleChoiceQuestions: allMC,
+          writtenQuestions: allWritten,
+          mode: 'ai'
+        },
+      });
+    } catch (genAiError) {
+      console.warn("AI generation failed, smoothly falling back to algorithmic generator:", genAiError);
+      const fallbackResult = generateAlgorithmicQuestions(
         safeTitle,
         safeAuthor,
         safeGrade,
-        part1,
-        halfMC,
-        halfWritten,
-        "Kitobning 1-qismi, qahramonlar tanishuvi, asar ekspozitsiyasi va asosiy voqealar boshlanishi"
-      );
-
-      const batch2 = await generateQuestionBatch(
-        ai,
-        safeTitle,
-        safeAuthor,
-        safeGrade,
-        part2.length > 50 ? part2 : part1,
-        remainingMC,
-        remainingWritten,
-        "Kitobning 2-qismi, kulminatsiya, qahramonlar fojiasi/yechimi, falsafiy ma'no va muallif xulosasi"
-      );
-
-      allMC = [...batch1.multipleChoiceQuestions, ...batch2.multipleChoiceQuestions];
-      allWritten = [...batch1.writtenQuestions, ...batch2.writtenQuestions];
-    } else {
-      const singleBatch = await generateQuestionBatch(
-        ai,
-        safeTitle,
-        safeAuthor,
-        safeGrade,
-        finalContent.slice(0, 35000),
+        finalContent,
         Number(multipleChoiceCount),
-        Number(writtenCount),
-        "Butun kitob bo'yicha to'liq savollar to'plami"
+        Number(writtenCount)
       );
-      allMC = singleBatch.multipleChoiceQuestions;
-      allWritten = singleBatch.writtenQuestions;
-    }
 
-    return res.json({
-      success: true,
-      data: {
-        multipleChoiceQuestions: allMC,
-        writtenQuestions: allWritten,
-      },
-    });
+      return res.json({
+        success: true,
+        data: {
+          multipleChoiceQuestions: fallbackResult.multipleChoiceQuestions,
+          writtenQuestions: fallbackResult.writtenQuestions,
+          mode: 'algorithmic'
+        },
+        notice: "Savollar o'rnatilgan aqlli lingvistik algoritm orqali (API kalitsiz) yaratildi."
+      });
+    }
   } catch (error: any) {
     console.error("AI Generation error:", error);
     return res.status(500).json({
@@ -346,7 +397,8 @@ apiRouter.post("/evaluate-written-answers", evaluateRateLimiter, async (req, res
     });
 
     if (itemsToEvaluate.length > 0) {
-      const evaluationPrompt = `Siz maktab o'quvchilari javoblarini baholovchi adolatli va professional adabiyot o'qituvchisisiz.
+      if (ai) {
+        const evaluationPrompt = `Siz maktab o'quvchilari javoblarini baholovchi adolatli va professional adabiyot o'qituvchisisiz.
 Kitob: "${bookTitle || "Adabiy asar"}"
 
 Vazifa: O'quvchining yozma javoblarini etalon javob (expectedAnswer) va kalit so'zlar (keywords) bilan solishtirib tekshiring.
@@ -358,46 +410,68 @@ ${JSON.stringify(itemsToEvaluate, null, 2)}
 
 Har bir savol uchun o'zbek tilida qisqa va aniq konstruktiv fikr (feedback) bering.`;
 
-      try {
-        const response = await ai.models.generateContent({
-          model: "gemini-3.1-flash-lite",
-          contents: evaluationPrompt,
-          config: {
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                evaluations: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      questionId: { type: Type.STRING },
-                      isAccepted: { type: Type.BOOLEAN },
-                      feedback: { type: Type.STRING },
+        try {
+          const response = await ai.models.generateContent({
+            model: "gemini-3.1-flash-lite",
+            contents: evaluationPrompt,
+            config: {
+              responseMimeType: "application/json",
+              responseSchema: {
+                type: Type.OBJECT,
+                properties: {
+                  evaluations: {
+                    type: Type.ARRAY,
+                    items: {
+                      type: Type.OBJECT,
+                      properties: {
+                        questionId: { type: Type.STRING },
+                        isAccepted: { type: Type.BOOLEAN },
+                        feedback: { type: Type.STRING },
+                      },
+                      required: ["questionId", "isAccepted", "feedback"],
                     },
-                    required: ["questionId", "isAccepted", "feedback"],
                   },
                 },
+                required: ["evaluations"],
               },
-              required: ["evaluations"],
             },
-          },
-        });
+          });
 
-        if (response.text) {
-          const parsed = JSON.parse(response.text);
-          if (Array.isArray(parsed.evaluations)) {
-            parsed.evaluations.forEach((item: any) => {
-              resultsMap.set(item.questionId, {
-                isAccepted: !!item.isAccepted,
-                feedback: item.feedback || (item.isAccepted ? "To'g'ri javob" : "Noto'g'ri javob"),
+          if (response.text) {
+            const parsed = JSON.parse(response.text);
+            if (Array.isArray(parsed.evaluations)) {
+              parsed.evaluations.forEach((item: any) => {
+                resultsMap.set(item.questionId, {
+                  isAccepted: !!item.isAccepted,
+                  feedback: item.feedback || (item.isAccepted ? "To'g'ri javob" : "Noto'g'ri javob"),
+                });
               });
-            });
+            }
           }
+        } catch (aiErr) {
+          console.warn("AI semantic evaluation fallback triggered:", aiErr);
+          itemsToEvaluate.forEach((item: any) => {
+            const studentAns = (item.studentAnswer || "").toLowerCase().trim();
+            const expectedAns = (item.expectedAnswer || "").toLowerCase().trim();
+            const kwList: string[] = item.keywords || [];
+
+            let matched =
+              studentAns === expectedAns ||
+              expectedAns.includes(studentAns) ||
+              studentAns.includes(expectedAns);
+
+            if (!matched && kwList.length > 0) {
+              matched = kwList.some((kw) => studentAns.includes(kw.toLowerCase().trim()));
+            }
+
+            resultsMap.set(item.questionId, {
+              isAccepted: matched,
+              feedback: matched ? "To'g'ri deb qabul qilindi." : "Etalon javobga to'g'ri kelmadi.",
+            });
+          });
         }
-      } catch (aiErr) {
-        console.warn("AI semantic evaluation fallback triggered:", aiErr);
+      } else {
+        // Direct semantic matching without API key
         itemsToEvaluate.forEach((item: any) => {
           const studentAns = (item.studentAnswer || "").toLowerCase().trim();
           const expectedAns = (item.expectedAnswer || "").toLowerCase().trim();

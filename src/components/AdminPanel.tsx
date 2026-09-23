@@ -41,6 +41,7 @@ import {
 import { safeFetchJson } from '../utils/api';
 import { exportResultsToExcel } from '../utils/excelExport';
 import { extractPdfTextInBrowser } from '../utils/pdfExtractor';
+import { generateAlgorithmicQuestions } from '../utils/algorithmicQuestionGenerator';
 import { StudentAnalyticsDashboard } from './StudentAnalyticsDashboard';
 
 interface AdminPanelProps {
@@ -264,39 +265,67 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     try {
       setTimeout(() => {
         setGenerationStep("Professional saviyadagi testlar va yaqin variantlar (chalg'ituvchi variantlar) tuzilmoqda...");
-      }, 3500);
+      }, 2000);
 
-      const token = adminToken || sessionStorage.getItem('maktab_admin_token') || '';
-      const resData = await safeFetchJson<{
-        success: boolean;
-        error?: string;
-        data: {
-          multipleChoiceQuestions: any[];
-          writtenQuestions: any[];
-        };
-      }>('/api/generate-questions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({
-          bookTitle: newBookTitle,
-          author: newBookAuthor,
-          grade: newBookGrade,
-          bookText: newBookText ? newBookText.slice(0, 150000) : '',
-          // Never send large pdfBase64 to avoid Vercel 4.5MB FUNCTION_PAYLOAD_TOO_LARGE
-          pdfBase64: !newBookText && pdfBase64 && pdfBase64.length < 3 * 1024 * 1024 ? pdfBase64 : undefined,
-          multipleChoiceCount: genConfig.multipleChoiceGenerateCount,
-          writtenCount: genConfig.writtenGenerateCount,
-        }),
-      });
+      let rawData: { multipleChoiceQuestions: any[]; writtenQuestions: any[] } | null = null;
+      let modeLabel = '';
 
-      if (!resData.success || !resData.data) {
-        throw new Error(resData.error || "Savollarni generatsiya qilishda xatolik yuz berdi");
+      // 1. Try serverless backend first
+      try {
+        const token = adminToken || sessionStorage.getItem('maktab_admin_token') || '';
+        const resData = await safeFetchJson<{
+          success: boolean;
+          error?: string;
+          notice?: string;
+          data?: {
+            multipleChoiceQuestions: any[];
+            writtenQuestions: any[];
+            mode?: string;
+          };
+        }>('/api/generate-questions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            bookTitle: newBookTitle,
+            author: newBookAuthor,
+            grade: newBookGrade,
+            bookText: newBookText ? newBookText.slice(0, 150000) : '',
+            // Never send large pdfBase64 to avoid Vercel 4.5MB FUNCTION_PAYLOAD_TOO_LARGE
+            pdfBase64: !newBookText && pdfBase64 && pdfBase64.length < 3 * 1024 * 1024 ? pdfBase64 : undefined,
+            multipleChoiceCount: genConfig.multipleChoiceGenerateCount,
+            writtenCount: genConfig.writtenGenerateCount,
+          }),
+        });
+
+        if (resData.success && resData.data && resData.data.multipleChoiceQuestions?.length > 0) {
+          rawData = resData.data;
+          modeLabel = resData.data.mode === 'ai' ? 'Gemini AI' : "O'rnatilgan aqlli tahlil (API kalitsiz)";
+        }
+      } catch (apiError) {
+        console.warn("Serverless API unavailable, switching to instant client-side generator:", apiError);
       }
 
-      const rawData = resData.data;
+      // 2. Seamless Client-Side Fallback (100% immune to API key missing or Vercel serverless issues!)
+      if (!rawData || !rawData.multipleChoiceQuestions || rawData.multipleChoiceQuestions.length === 0) {
+        setGenerationStep("O'rnatilgan aqlli test mexanizmi orqali (API kalitsiz) savollar shakllantirilmoqda...");
+        const localResult = generateAlgorithmicQuestions(
+          newBookTitle,
+          newBookAuthor,
+          newBookGrade,
+          newBookText,
+          genConfig.multipleChoiceGenerateCount,
+          genConfig.writtenGenerateCount
+        );
+        rawData = {
+          multipleChoiceQuestions: localResult.multipleChoiceQuestions,
+          writtenQuestions: localResult.writtenQuestions,
+        };
+        modeLabel = "O'rnatilgan aqlli tahlil (API kalitsiz)";
+      }
+
       const generatedMC: Question[] = (rawData.multipleChoiceQuestions || []).map(
         (q: any, i: number) => ({
           id: `mc-${Date.now()}-${i}`,
@@ -326,7 +355,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         author: newBookAuthor.trim() || "Muallif",
         grade: newBookGrade,
         coverColor: "from-blue-600 to-indigo-800",
-        description: `Kitobdan AI yordamida ${allQuestions.length} ta yuqori saviyali, variantlari bir-biriga yaqin professional test savollari shakllantirildi (${generatedMC.length} ta variantli, ${generatedWritten.length} ta yozma).`,
+        description: `Kitobdan ${modeLabel} orqali jami ${allQuestions.length} ta yuqori saviyali, variantlari bir-biriga yaqin professional test savollari shakllantirildi (${generatedMC.length} ta variantli, ${generatedWritten.length} ta yozma).`,
         questions: allQuestions,
         createdAt: new Date().toISOString(),
       };
@@ -336,7 +365,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       setSelectedBookId(newBook.id);
 
       setGenSuccessMessage(
-        `Muvaffaqiyatli! "${newBookTitle}" kitobi bo'yicha jami ${allQuestions.length} ta yuqori saviyali test (${generatedMC.length} ta variantlari bir-biriga yaqin test va ${generatedWritten.length} ta yozma savol) professional darajada tuzildi va saqlandi.`
+        `Muvaffaqiyatli! "${newBookTitle}" kitobi bo'yicha jami ${allQuestions.length} ta yuqori saviyali test (${generatedMC.length} ta variantli test va ${generatedWritten.length} ta yozma savol) ${modeLabel} orqali yaratildi va saqlandi.`
       );
 
       // Reset file & inputs
@@ -557,21 +586,25 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               <div>
                 <h2 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
                   <Sparkles className="w-5 h-5 text-blue-600" />
-                  <span>PDF Kitob kiritish va Professional Test tuzish</span>
+                  <span>PDF Kitob kiritish va Test tuzish</span>
                 </h2>
                 <p className="text-xs sm:text-sm text-slate-500 mt-1">
-                  PDF formatdagi to'liq kitobni yuklang. AI kitobni professional tarzda tahlil qiladi va variantlari bir-biriga yaqin, yuqori saviyali testlar tuzadi.
+                  PDF formatdagi to'liq kitobni yuklang. Tizim kitobni avtomatik tahlil qilib, variantlari bir-biriga yaqin, professional test savollarini tuzadi (API kalit talab etilmaydi).
                 </p>
               </div>
 
               {/* Quality Badges */}
               <div className="flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-lg text-xs font-semibold">
+                  <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>API kalitsiz ham 100% ishlaydi</span>
+                </span>
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 border border-blue-200 text-blue-800 rounded-lg text-xs font-semibold">
                   <Award className="w-3.5 h-3.5 text-blue-600" />
                   <span>Yaqin variantli savollar</span>
                 </span>
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-lg text-xs font-semibold">
-                  <Globe className="w-3.5 h-3.5 text-emerald-600" />
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-purple-50 border border-purple-200 text-purple-800 rounded-lg text-xs font-semibold">
+                  <Globe className="w-3.5 h-3.5 text-purple-600" />
                   <span>Adabiy tahlil</span>
                 </span>
               </div>
