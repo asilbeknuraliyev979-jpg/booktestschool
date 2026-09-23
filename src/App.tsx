@@ -81,7 +81,9 @@ export default function App() {
   }, [books]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.STUDENT, JSON.stringify(studentInfo));
+    if (studentInfo.fullName || studentInfo.grade) {
+      localStorage.setItem(STORAGE_KEYS.STUDENT, JSON.stringify(studentInfo));
+    }
   }, [studentInfo]);
 
   useEffect(() => {
@@ -91,6 +93,95 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.RESULTS, JSON.stringify(results));
   }, [results]);
+
+  // Central Server Synchronization on mount (Multi-computer sync)
+  useEffect(() => {
+    const syncFromServer = async () => {
+      try {
+        const booksRes = await fetch('/api/books');
+        if (booksRes.ok) {
+          const data = await booksRes.json();
+          if (data.success && Array.isArray(data.books) && data.books.length > 0) {
+            setBooks(data.books);
+          }
+        }
+      } catch (e) {
+        console.warn("Could not fetch books from central server:", e);
+      }
+
+      try {
+        const resultsRes = await fetch('/api/results');
+        if (resultsRes.ok) {
+          const data = await resultsRes.json();
+          if (data.success && Array.isArray(data.results)) {
+            setResults(data.results);
+          }
+        }
+      } catch (e) {
+        console.warn("Could not fetch results from central server:", e);
+      }
+
+      try {
+        const configRes = await fetch('/api/delivery-config');
+        if (configRes.ok) {
+          const data = await configRes.json();
+          if (data.success && data.config) {
+            setDeliveryConfig((prev) => ({ ...prev, ...data.config }));
+          }
+        }
+      } catch (e) {
+        console.warn("Could not fetch config from central server:", e);
+      }
+    };
+
+    syncFromServer();
+  }, []);
+
+  // Update books and synchronize with server for all computers
+  const handleUpdateBooks = (newBooks: Book[] | ((prev: Book[]) => Book[])) => {
+    setBooks((prev) => {
+      const updated = typeof newBooks === 'function' ? newBooks(prev) : newBooks;
+      fetch('/api/books', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ books: updated }),
+      }).catch((err) => console.warn("Could not sync books to server:", err));
+      return updated;
+    });
+  };
+
+  // Update delivery config and synchronize with server
+  const handleUpdateDeliveryConfig = (newConfig: TestDeliveryConfig | ((prev: TestDeliveryConfig) => TestDeliveryConfig)) => {
+    setDeliveryConfig((prev) => {
+      const updated = typeof newConfig === 'function' ? newConfig(prev) : newConfig;
+      fetch('/api/delivery-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config: updated }),
+      }).catch((err) => console.warn("Could not sync delivery config to server:", err));
+      return updated;
+    });
+  };
+
+  // Clear all results and sync with server
+  const handleClearResults = async () => {
+    setResults([]);
+    try {
+      await fetch('/api/results', { method: 'DELETE' });
+    } catch (e) {
+      console.warn("Could not clear results on server:", e);
+    }
+  };
+
+  // Delete single result and sync with server
+  const handleDeleteResult = async (resId: string) => {
+    setResults((prev) => prev.filter((r) => r.id !== resId));
+    try {
+      await fetch(`/api/results/${resId}`, { method: 'DELETE' });
+    } catch (e) {
+      console.warn("Could not delete result on server:", e);
+    }
+  };
 
   // URL-based Admin Navigation (/admin)
   // "adminga kirish uchun ham brauzerda urlda /admin deb yozsa kiradigan qil interfeysda tugma qo'yma"
@@ -203,6 +294,22 @@ export default function App() {
 
   const handleTestComplete = (newResult: StudentTestResult) => {
     setResults((prev) => [newResult, ...prev]);
+    // Save to central server so teacher's PC sees the result immediately
+    fetch('/api/results', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ result: newResult }),
+    }).catch((err) => console.warn("Could not sync test result:", err));
+
+    // Clear saved student in localStorage so refreshing the page doesn't keep old student credentials
+    localStorage.removeItem(STORAGE_KEYS.STUDENT);
+  };
+
+  // Exit test and clear student info so next student starts fresh
+  const handleExitTest = () => {
+    setActiveTestBook(null);
+    setStudentInfo({ fullName: '', grade: '' });
+    localStorage.removeItem(STORAGE_KEYS.STUDENT);
   };
 
   const handlePromptStudentInfo = () => {
@@ -246,19 +353,19 @@ export default function App() {
             studentInfo={studentInfo}
             deliveryConfig={deliveryConfig}
             onComplete={handleTestComplete}
-            onCancel={() => setActiveTestBook(null)}
+            onCancel={handleExitTest}
           />
         ) : isAdmin ? (
           /* 2. ADMIN PANEL VIEW (Protected by Session Token) */
           <AdminPanel
             books={books}
-            onUpdateBooks={setBooks}
+            onUpdateBooks={handleUpdateBooks}
             deliveryConfig={deliveryConfig}
-            onUpdateDeliveryConfig={setDeliveryConfig}
+            onUpdateDeliveryConfig={handleUpdateDeliveryConfig}
             results={results}
-            onClearResults={() => setResults([])}
-            onDeleteResult={(resId: string) => setResults((prev) => prev.filter((r) => r.id !== resId))}
-            onResetToInitialBooks={() => setBooks(INITIAL_BOOKS)}
+            onClearResults={handleClearResults}
+            onDeleteResult={handleDeleteResult}
+            onResetToInitialBooks={() => handleUpdateBooks(INITIAL_BOOKS)}
             adminToken={adminToken || undefined}
           />
         ) : (
@@ -279,7 +386,10 @@ export default function App() {
                 books={books}
                 deliveryConfig={deliveryConfig}
                 isStudentReady={isStudentReady}
-                onStartTest={(book) => setActiveTestBook(book)}
+                onStartTest={(book) => {
+                  if (book.isActive === false) return;
+                  setActiveTestBook(book);
+                }}
                 onNeedStudentInfo={handlePromptStudentInfo}
               />
             </div>

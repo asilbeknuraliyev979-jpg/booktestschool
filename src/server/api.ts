@@ -1,6 +1,7 @@
 import express from "express";
 import { GoogleGenAI, Type } from "@google/genai";
 import { generateAlgorithmicQuestions } from "../utils/algorithmicQuestionGenerator";
+import { storage } from "./store";
 import {
   authenticateAdmin,
   verifySessionToken,
@@ -507,5 +508,109 @@ Har bir savol uchun o'zbek tilida qisqa va aniq konstruktiv fikr (feedback) beri
   } catch (error: any) {
     console.error("Evaluate written answers error:", error);
     return res.status(500).json({ error: error?.message || "Baholashda xatolik yuz berdi" });
+  }
+});
+
+// ==========================================
+// CENTRALIZED DATA SYNC ENDPOINTS (MULTI-DEVICE)
+// ==========================================
+
+// 1. Get all books
+apiRouter.get("/books", (req, res) => {
+  try {
+    const books = storage.getBooks();
+    return res.json({ success: true, books });
+  } catch (err: any) {
+    console.error("Get books error:", err);
+    return res.status(500).json({ success: false, error: "Kitoblarni yuklashda xatolik" });
+  }
+});
+
+// 2. Save all books (or add new books)
+apiRouter.post("/books", (req, res) => {
+  try {
+    const { books } = req.body || {};
+    if (!Array.isArray(books)) {
+      return res.status(400).json({ success: false, error: "Kitoblar ro'yxati noto'g'ri formatda" });
+    }
+    const saved = storage.saveBooks(books);
+    return res.json({ success: true, books: saved, message: "Kitoblar markaziy serverga saqlandi" });
+  } catch (err: any) {
+    console.error("Save books error:", err);
+    return res.status(500).json({ success: false, error: "Kitoblarni saqlashda xatolik" });
+  }
+});
+
+// 3. Get all test results
+apiRouter.get("/results", (req, res) => {
+  try {
+    const results = storage.getResults();
+    return res.json({ success: true, results });
+  } catch (err: any) {
+    console.error("Get results error:", err);
+    return res.status(500).json({ success: false, error: "Natijalarni yuklashda xatolik" });
+  }
+});
+
+// 4. Save a new test result
+apiRouter.post("/results", (req, res) => {
+  try {
+    const { result } = req.body || {};
+    if (!result || !result.studentName) {
+      return res.status(400).json({ success: false, error: "Natija ma'lumotlari to'liq emas" });
+    }
+    const saved = storage.addResult(result);
+    return res.json({ success: true, result: saved, message: "Test natijasi markaziy serverga saqlandi" });
+  } catch (err: any) {
+    console.error("Save result error:", err);
+    return res.status(500).json({ success: false, error: "Natijani saqlashda xatolik" });
+  }
+});
+
+// 5. Clear all results
+apiRouter.delete("/results", (req, res) => {
+  try {
+    storage.clearResults();
+    return res.json({ success: true, message: "Barcha natijalar tozalandi" });
+  } catch (err: any) {
+    console.error("Clear results error:", err);
+    return res.status(500).json({ success: false, error: "Natijalarni tozalashda xatolik" });
+  }
+});
+
+// 6. Delete a single result
+apiRouter.delete("/results/:id", (req, res) => {
+  try {
+    const { id } = req.params;
+    if (id) {
+      storage.deleteResult(id);
+    }
+    return res.json({ success: true, message: "Natija o'chirildi" });
+  } catch (err: any) {
+    console.error("Delete result error:", err);
+    return res.status(500).json({ success: false, error: "Natijani o'chirishda xatolik" });
+  }
+});
+
+// 7. Get / Save Delivery Config
+apiRouter.get("/delivery-config", (req, res) => {
+  try {
+    const config = storage.getDeliveryConfig();
+    return res.json({ success: true, config });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: "Sozlamalarni olishda xatolik" });
+  }
+});
+
+apiRouter.post("/delivery-config", (req, res) => {
+  try {
+    const { config } = req.body || {};
+    if (!config) {
+      return res.status(400).json({ success: false, error: "Sozlamalar berilmadi" });
+    }
+    const saved = storage.saveDeliveryConfig(config);
+    return res.json({ success: true, config: saved });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: "Sozlamalarni saqlashda xatolik" });
   }
 });

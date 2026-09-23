@@ -22,6 +22,7 @@ export interface Book {
   description: string;
   questions: Question[];
   createdAt: string;
+  isActive?: boolean; // true = faol (Start), false = nofaol (Finish)
 }
 
 export interface TestDeliveryConfig {

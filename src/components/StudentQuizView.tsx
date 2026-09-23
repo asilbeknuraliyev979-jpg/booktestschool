@@ -78,17 +78,21 @@ export const StudentQuizView: React.FC<StudentQuizViewProps> = ({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [terminatedDueToTabSwitch, setTerminatedDueToTabSwitch] = useState(false);
   const [securityToast, setSecurityToast] = useState<string | null>(null);
+  const [tabSwitchCount, setTabSwitchCount] = useState(0);
+  const [showTabWarningModal, setShowTabWarningModal] = useState(false);
 
   // Synchronous refs for event listeners
   const mcAnswersRef = useRef<Record<string, number>>({});
   const writtenAnswersRef = useRef<Record<string, string>>({});
   const isSubmittedRef = useRef(false);
   const timeLeftRef = useRef(deliveryConfig.timeLimitMinutes * 60);
+  const tabSwitchCountRef = useRef(0);
 
   mcAnswersRef.current = mcAnswers;
   writtenAnswersRef.current = writtenAnswers;
   isSubmittedRef.current = isSubmitted;
   timeLeftRef.current = timeLeft;
+  tabSwitchCountRef.current = tabSwitchCount;
 
   // 1. FULLSCREEN HELPER FUNCTIONS
   const enterFullscreen = useCallback(async () => {
@@ -364,14 +368,25 @@ export const StudentQuizView: React.FC<StudentQuizViewProps> = ({
     }
   }, [book, deliveryConfig, exitFullscreen, onComplete, selectedQuestions, studentInfo]);
 
-  // 2. ANTI-CHEAT: TAB SWITCH DETECTION ("agar boshqa tabga o'tsa birdan test tugatilsin")
+  // 2. ANTI-CHEAT: TAB SWITCH DETECTION (1-marta ogohlantirish, 2-marta birdaniga to'xtatish)
   useEffect(() => {
     if (isSubmitted) return;
 
     const handleVisibilityChange = () => {
       if (document.hidden || document.visibilityState === 'hidden') {
         if (!isSubmittedRef.current) {
-          handleSubmitQuiz('tab_switch');
+          const currentCount = tabSwitchCountRef.current + 1;
+          tabSwitchCountRef.current = currentCount;
+          setTabSwitchCount(currentCount);
+
+          if (currentCount === 1) {
+            // 1-marta qoidabuzarlik: Jiddiy ogohlantirish modalini chiqarish
+            setShowTabWarningModal(true);
+          } else if (currentCount >= 2) {
+            // 2-marta qoidabuzarlik: Birdaniga testni to'xtatish va chiqarib yuborish
+            setShowTabWarningModal(false);
+            handleSubmitQuiz('tab_switch');
+          }
         }
       }
     };
@@ -483,13 +498,13 @@ export const StudentQuizView: React.FC<StudentQuizViewProps> = ({
             </div>
             <div>
               <span className="px-2.5 py-0.5 rounded-md bg-white text-red-700 font-extrabold text-xs uppercase tracking-wider">
-                Qoidabuzarlik aniqlandi
+                Qoidabuzarlik: Test To'xtatildi
               </span>
               <h2 className="text-lg sm:text-xl font-black tracking-tight mt-1.5">
-                Boshqa Tabga O'tganlik Sababli Test Darhol Yakunlandi!
+                Boshqa Tabga 2 Marta O'tganlik Sababli Test Darhol Yakunlandi!
               </h2>
               <p className="text-sm text-red-100 mt-1 leading-relaxed">
-                Platforma xavfsizlik tizimi test topshirish jarayonida brauzerdagi boshqa sahifaga (tabga) yoki boshqa dasturga o'tilganini qayd etdi. Qoidalarga muvofiq test darhol to'xtatildi va siz kiritgan javoblar shu holatida yakuniy hisobotga saqlandi.
+                Platforma xavfsizlik tizimi test davomida 2 marta brauzerdagi boshqa sahifaga (tabga) yoki boshqa dasturga o'tilganini qayd etdi (1-marta ogohlantirilgan edi). Qoidalarga muvofiq test majburiy to'xtatildi va siz kiritgan javoblar shu holatida yakuniy hisobotga saqlandi.
               </p>
             </div>
           </div>
@@ -964,6 +979,53 @@ export const StudentQuizView: React.FC<StudentQuizViewProps> = ({
                 className="px-5 py-2 text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl transition-all shadow-xs"
               >
                 Ha, yakunlash
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Tab Switch 1st Warning Modal (1 / 2) */}
+      {showTabWarningModal && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl p-6 sm:p-7 max-w-lg w-full space-y-5 shadow-2xl border-2 border-amber-400">
+            <div className="flex items-start gap-4">
+              <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-600 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-7 h-7" />
+              </div>
+              <div>
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-wider bg-amber-100 text-amber-800 border border-amber-300">
+                  Ogohlantirish (1 / 2)
+                </span>
+                <h3 className="font-extrabold text-lg sm:text-xl text-slate-900 mt-1">
+                  Boshqa tabga yoki dasturga o'tdingiz!
+                </h3>
+              </div>
+            </div>
+
+            <p className="text-sm text-slate-700 leading-relaxed">
+              Maktab bilim sinovi qoidalariga binoan, test topshirish jarayonida brauzerdagi boshqa tabga, yangi oynaga yoki boshqa dasturga o'tish qat'iyan taqiqlanadi!
+            </p>
+
+            <div className="p-4 bg-red-50 border-2 border-red-200 rounded-2xl">
+              <p className="text-xs sm:text-sm font-bold text-red-800 flex items-center gap-2">
+                <ShieldAlert className="w-5 h-5 shrink-0 text-red-600" />
+                <span>
+                  DIQQAT: Agar yana 1 marta boshqa oynaga/tabga o'tsangiz, testingiz DARHOL TO'XTATILADI va yakunlanadi!
+                </span>
+              </p>
+            </div>
+
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowTabWarningModal(false);
+                  enterFullscreen();
+                }}
+                className="w-full py-3 px-5 text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-all shadow-md active:scale-98"
+              >
+                Tushundim, testni davom ettirish
               </button>
             </div>
           </div>

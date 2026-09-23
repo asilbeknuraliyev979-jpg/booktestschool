@@ -30,6 +30,11 @@ import {
   CheckCircle,
   Layers,
   AlertTriangle,
+  Play,
+  Square,
+  Lock,
+  Unlock,
+  PlayCircle,
 } from 'lucide-react';
 import {
   Book,
@@ -67,7 +72,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   onResetToInitialBooks,
   adminToken,
 }) => {
-  const [activeTab, setActiveTab] = useState<'generate' | 'edit-books' | 'analytics' | 'settings'>('generate');
+  const [activeTab, setActiveTab] = useState<'control' | 'generate' | 'edit-books' | 'analytics' | 'settings'>('control');
 
   // --- AI Generation State ---
   const [newBookTitle, setNewBookTitle] = useState('');
@@ -358,6 +363,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         description: `Kitobdan ${modeLabel} orqali jami ${allQuestions.length} ta yuqori saviyali, variantlari bir-biriga yaqin professional test savollari shakllantirildi (${generatedMC.length} ta variantli, ${generatedWritten.length} ta yozma).`,
         questions: allQuestions,
         createdAt: new Date().toISOString(),
+        isActive: true, // Yangi yaratilgan test avtomatik faol (Start) bo'ladi
       };
 
       const updated = [newBook, ...books];
@@ -465,6 +471,29 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     }
   };
 
+  // Toggle individual book test status (Start / Finish)
+  const handleToggleBookStatus = (bookId: string, setActive: boolean) => {
+    const updated = books.map((b) => {
+      if (b.id === bookId) {
+        return { ...b, isActive: setActive };
+      }
+      return b;
+    });
+    onUpdateBooks(updated);
+  };
+
+  // Batch Start All tests
+  const handleStartAllTests = () => {
+    const updated = books.map((b) => ({ ...b, isActive: true }));
+    onUpdateBooks(updated);
+  };
+
+  // Batch Finish All tests
+  const handleFinishAllTests = () => {
+    const updated = books.map((b) => ({ ...b, isActive: false }));
+    onUpdateBooks(updated);
+  };
+
   // Export all books & tests to JSON
   const handleExportBackup = () => {
     const exportData = {
@@ -529,10 +558,101 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     return matchName && matchClass;
   });
 
+  const [isSyncingServer, setIsSyncingServer] = useState(false);
+  const [syncStatusText, setSyncStatusText] = useState<string | null>(null);
+
+  const handleSyncWithServer = async () => {
+    setIsSyncingServer(true);
+    setSyncStatusText(null);
+    try {
+      const res = await fetch('/api/books');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.books)) {
+          onUpdateBooks(data.books);
+          setSyncStatusText("Server bilan muvaffaqiyatli sinxronlandi! Barcha testlar yangilandi.");
+        }
+      } else {
+        setSyncStatusText("Serverga ulanishda xatolik yuz berdi.");
+      }
+    } catch {
+      setSyncStatusText("Tarmoq xatoligi yoki server javob bermadi.");
+    } finally {
+      setIsSyncingServer(false);
+      setTimeout(() => setSyncStatusText(null), 4000);
+    }
+  };
+
   return (
     <div className="max-w-6xl mx-auto space-y-6 pb-20">
+      {/* Multi-PC Central Server Sync & Persistence Banner */}
+      <div className="bg-gradient-to-r from-blue-900 to-indigo-900 text-white rounded-2xl p-4 sm:p-5 shadow-sm flex flex-wrap items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center shrink-0">
+            <Globe className="w-5 h-5 text-blue-300" />
+          </div>
+          <div>
+            <h3 className="font-bold text-sm sm:text-base flex items-center gap-2">
+              <span>Barcha kompyuterlar bilan markaziy sinxronizatsiya</span>
+              <span className="text-2xs bg-emerald-500/30 text-emerald-300 border border-emerald-400/40 px-2 py-0.5 rounded-full font-bold uppercase">
+                Aktiv
+              </span>
+            </h3>
+            <p className="text-xs text-blue-200 mt-0.5">
+              Siz yaratgan barcha testlar va o'quvchilar natijalari markaziy server orqali boshqa kompyuterlarda ham avtomatik ko'rinadi.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleSyncWithServer}
+            disabled={isSyncingServer}
+            className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white/15 hover:bg-white/25 active:scale-95 text-xs font-semibold text-white transition-all border border-white/20"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isSyncingServer ? 'animate-spin' : ''}`} />
+            <span>{isSyncingServer ? 'Sinxronlanmoqda...' : 'Serverdan yangilash'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleExportBackup}
+            className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white/15 hover:bg-white/25 active:scale-95 text-xs font-semibold text-white transition-all border border-white/20"
+            title="Barcha kitoblar va testlarni JSON fayl sifatida yuklab olish"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Eksport (JSON)</span>
+          </button>
+        </div>
+      </div>
+
+      {syncStatusText && (
+        <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs sm:text-sm rounded-xl font-medium flex items-center gap-2 animate-in fade-in duration-200">
+          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+          <span>{syncStatusText}</span>
+        </div>
+      )}
+
       {/* Top Tabs */}
       <div className="bg-white rounded-2xl border border-slate-200/90 p-2 shadow-xs flex flex-wrap gap-2">
+        <button
+          onClick={() => setActiveTab('control')}
+          className={`flex-1 min-w-[200px] py-2.5 px-4 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-all ${
+            activeTab === 'control'
+              ? 'bg-blue-600 text-white shadow-xs'
+              : 'text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          <Play className="w-4 h-4 fill-emerald-400 text-emerald-400" />
+          <span>Testlarni Boshqarish (Start / Finish)</span>
+          <span className={`px-2 py-0.5 rounded-full text-2xs font-extrabold ${
+            activeTab === 'control' ? 'bg-white/20 text-white' : 'bg-emerald-100 text-emerald-800'
+          }`}>
+            {books.filter((b) => b.isActive !== false).length} faol
+          </span>
+        </button>
+
         <button
           onClick={() => setActiveTab('generate')}
           className={`flex-1 min-w-[180px] py-2.5 px-4 rounded-xl text-xs sm:text-sm font-semibold flex items-center justify-center gap-2 transition-all ${
@@ -581,6 +701,184 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           <span>Test Sozlamalari</span>
         </button>
       </div>
+
+      {/* TAB 0: TEST CONTROL (START / FINISH) */}
+      {activeTab === 'control' && (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 sm:p-8 space-y-6">
+          {/* Header */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b pb-5">
+            <div>
+              <h2 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
+                <PlayCircle className="w-6 h-6 text-emerald-600" />
+                <span>Testlarni Boshqarish (Start & Finish Rejimi)</span>
+              </h2>
+              <p className="text-xs sm:text-sm text-slate-500 mt-1">
+                O'quvchilar test topshira olishi uchun testni <strong>Start</strong> (Faol) holatga o'tkazing. Sinov tugagach, <strong>Finish</strong> (Nofaol) tugmasini bosib testni yopib qo'yishingiz mumkin.
+              </p>
+            </div>
+
+            {/* Quick Batch Actions */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={handleStartAllTests}
+                className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 transition-all shadow-sm"
+                title="Barcha kitob testlarini bir vaqtda faollashtirish (Start)"
+              >
+                <Play className="w-4 h-4 fill-white" />
+                <span>Barchasini Boshlash (Start All)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleFinishAllTests}
+                className="px-4 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border-2 border-rose-300 active:scale-95 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 transition-all"
+                title="Barcha kitob testlarini bir vaqtda to'xtatish / nofaol qilish (Finish)"
+              >
+                <Square className="w-4 h-4 fill-rose-600" />
+                <span>Barchasini Yakunlash (Finish All)</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Quick Metrics */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
+              <span className="text-xs font-semibold text-slate-500">Jami Kitob Testlari:</span>
+              <p className="text-2xl font-black text-slate-900 mt-1">{books.length} ta</p>
+            </div>
+            <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200">
+              <span className="text-xs font-semibold text-emerald-800">Faol Rejimda (Start):</span>
+              <p className="text-2xl font-black text-emerald-700 mt-1">
+                {books.filter((b) => b.isActive !== false).length} ta
+              </p>
+              <p className="text-2xs text-emerald-600 mt-0.5">O'quvchilar hozir topshira oladi</p>
+            </div>
+            <div className="p-4 rounded-xl bg-slate-100 border border-slate-300">
+              <span className="text-xs font-semibold text-slate-600">Nofaol / Yopiq (Finish):</span>
+              <p className="text-2xl font-black text-slate-700 mt-1">
+                {books.filter((b) => b.isActive === false).length} ta
+              </p>
+              <p className="text-2xs text-slate-500 mt-0.5">O'quvchilarga yopiq, kira olishmaydi</p>
+            </div>
+          </div>
+
+          {/* List of Books & Individual Control */}
+          <div className="space-y-3">
+            <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">
+              Kitoblar Ro'yxati va Ularning Holati
+            </h3>
+
+            {books.length === 0 ? (
+              <div className="p-8 text-center bg-slate-50 border border-dashed border-slate-200 rounded-xl space-y-2">
+                <p className="text-sm font-semibold text-slate-700">Hozircha birorta ham test kitobi mavjud emas.</p>
+                <p className="text-xs text-slate-500">
+                  "PDF Kitob & Professional AI Test" bo'limidan yangi testlar bazasini yarating.
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-3.5">
+                {books.map((book) => {
+                  const isActive = book.isActive !== false;
+                  const mcCount = book.questions.filter((q) => q.type === 'multiple-choice').length;
+                  const writtenCount = book.questions.filter((q) => q.type === 'written').length;
+
+                  return (
+                    <div
+                      key={book.id}
+                      className={`p-4 sm:p-5 rounded-2xl border transition-all flex flex-col md:flex-row md:items-center justify-between gap-4 ${
+                        isActive
+                          ? 'border-emerald-300 bg-white shadow-xs'
+                          : 'border-slate-200 bg-slate-50/70'
+                      }`}
+                    >
+                      {/* Left: Book Meta */}
+                      <div className="space-y-1.5 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="px-2.5 py-0.5 text-xs font-bold uppercase tracking-wider bg-blue-50 text-blue-700 border border-blue-200 rounded-md">
+                            {book.grade}
+                          </span>
+                          <span className="text-xs text-slate-500">
+                            Muallif: <strong className="text-slate-700 font-semibold">{book.author}</strong>
+                          </span>
+
+                          {/* Live Status Badge */}
+                          {isActive ? (
+                            <span className="inline-flex items-center gap-1.5 px-3 py-0.5 text-xs font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-full animate-in fade-in">
+                              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                              FAOL (START)
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5 px-3 py-0.5 text-xs font-bold uppercase tracking-wider bg-slate-200 text-slate-700 border border-slate-300 rounded-full">
+                              <Lock className="w-3 h-3 text-slate-500" />
+                              NOFAOL / YAKUNLANGAN (FINISH)
+                            </span>
+                          )}
+                        </div>
+
+                        <h4 className="text-base sm:text-lg font-bold text-slate-900">
+                          {book.title}
+                        </h4>
+
+                        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                          <span>Jami: <strong className="text-slate-700 font-semibold">{book.questions.length} ta savol</strong></span>
+                          <span>•</span>
+                          <span>{mcCount} ta variantli</span>
+                          <span>•</span>
+                          <span>{writtenCount} ta yozma</span>
+                          <span>•</span>
+                          <span className={isActive ? 'text-emerald-700 font-medium' : 'text-slate-500'}>
+                            {isActive ? "O'quvchilar hozir test topshira oladi" : "O'quvchilar uchun test yopiq"}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Right: Actions */}
+                      <div className="flex items-center gap-2 flex-wrap shrink-0">
+                        {/* Start / Finish Toggle */}
+                        {isActive ? (
+                          <button
+                            type="button"
+                            onClick={() => handleToggleBookStatus(book.id, false)}
+                            className="flex items-center gap-2 px-5 py-2.5 rounded-xl font-extrabold text-xs sm:text-sm bg-rose-50 hover:bg-rose-100 active:scale-95 text-rose-700 border-2 border-rose-300 transition-all shadow-xs"
+                            title="Testni nofaol (Finish) qilish: O'quvchilar endi ushbu testni topshirolmaydi"
+                          >
+                            <Square className="w-4 h-4 fill-rose-600 text-rose-600" />
+                            <span>FINISH (Nofaol qilish)</span>
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handleToggleBookStatus(book.id, true)}
+                            className="flex items-center gap-2 px-5 py-2.5 rounded-xl font-extrabold text-xs sm:text-sm bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white border-2 border-emerald-600 transition-all shadow-md"
+                            title="Testni faollashtirish (Start): O'quvchilar testni boshlashi mumkin bo'ladi"
+                          >
+                            <Play className="w-4 h-4 fill-white text-white" />
+                            <span>START (Faollashtirish)</span>
+                          </button>
+                        )}
+
+                        {/* Jump to Edit */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedBookId(book.id);
+                            setActiveTab('edit-books');
+                          }}
+                          className="px-3.5 py-2.5 rounded-xl font-semibold text-xs text-slate-700 bg-white hover:bg-slate-100 border border-slate-300 transition-all"
+                          title="Savollarni ko'rish va tahrirlash"
+                        >
+                          Tahrirlash
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* TAB 1: PDF BOOK UPLOAD & PROFESSIONAL AI GENERATION */}
       {activeTab === 'generate' && (
@@ -976,15 +1274,39 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               </div>
 
               {selectedBook && (
-                <button
-                  type="button"
-                  onClick={() => handleDeleteBook(selectedBook.id)}
-                  className="px-3 py-2 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors"
-                  title="Ushbu kitob va barcha test savollarini o'chirish"
-                >
-                  <Trash2 className="w-3.5 h-3.5 text-red-600" />
-                  <span>Kitobni o'chirish</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  {selectedBook.isActive !== false ? (
+                    <button
+                      type="button"
+                      onClick={() => handleToggleBookStatus(selectedBook.id, false)}
+                      className="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-300 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors"
+                      title="Ushbu testni nofaol (Finish) qilish"
+                    >
+                      <Square className="w-3.5 h-3.5 fill-rose-600 text-rose-600" />
+                      <span>Finish (Nofaol)</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleToggleBookStatus(selectedBook.id, true)}
+                      className="px-3 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors"
+                      title="Ushbu testni faollashtirish (Start)"
+                    >
+                      <Play className="w-3.5 h-3.5 fill-emerald-600 text-emerald-600" />
+                      <span>Start (Faollashtirish)</span>
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteBook(selectedBook.id)}
+                    className="px-3 py-2 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors"
+                    title="Ushbu kitob va barcha test savollarini o'chirish"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-red-600" />
+                    <span>Kitobni o'chirish</span>
+                  </button>
+                </div>
               )}
             </div>
           </div>
