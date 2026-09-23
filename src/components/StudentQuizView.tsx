@@ -372,29 +372,46 @@ export const StudentQuizView: React.FC<StudentQuizViewProps> = ({
   useEffect(() => {
     if (isSubmitted) return;
 
-    const handleVisibilityChange = () => {
-      if (document.hidden || document.visibilityState === 'hidden') {
-        if (!isSubmittedRef.current) {
-          const currentCount = tabSwitchCountRef.current + 1;
-          tabSwitchCountRef.current = currentCount;
-          setTabSwitchCount(currentCount);
+    let lastSwitchTime = 0;
 
-          if (currentCount === 1) {
-            // 1-marta qoidabuzarlik: Jiddiy ogohlantirish modalini chiqarish
-            setShowTabWarningModal(true);
-          } else if (currentCount >= 2) {
-            // 2-marta qoidabuzarlik: Birdaniga testni to'xtatish va chiqarib yuborish
-            setShowTabWarningModal(false);
-            handleSubmitQuiz('tab_switch');
-          }
-        }
+    const handleTabViolation = () => {
+      if (isSubmittedRef.current) return;
+      const now = Date.now();
+      // Debounce window blur + visibilitychange firing simultaneously (within 800ms)
+      if (now - lastSwitchTime < 800) return;
+      lastSwitchTime = now;
+
+      const currentCount = tabSwitchCountRef.current + 1;
+      tabSwitchCountRef.current = currentCount;
+      setTabSwitchCount(currentCount);
+
+      if (currentCount === 1) {
+        // 1-marta qoidabuzarlik: Jiddiy ogohlantirish modalini chiqarish
+        setShowTabWarningModal(true);
+      } else if (currentCount >= 2) {
+        // 2-marta qoidabuzarlik: Birdaniga testni to'xtatish va chiqarib yuborish
+        setShowTabWarningModal(false);
+        handleSubmitQuiz('tab_switch');
       }
     };
 
+    const handleVisibilityChange = () => {
+      if (document.hidden || document.visibilityState === 'hidden') {
+        handleTabViolation();
+      }
+    };
+
+    const handleWindowBlur = () => {
+      // If student clicks away to another app or changes tab
+      handleTabViolation();
+    };
+
     document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('blur', handleWindowBlur);
 
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('blur', handleWindowBlur);
     };
   }, [isSubmitted, handleSubmitQuiz]);
 

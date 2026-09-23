@@ -7,6 +7,7 @@ interface AppStorageData {
   books: Book[];
   results: StudentTestResult[];
   deliveryConfig: TestDeliveryConfig;
+  version: number;
 }
 
 const DEFAULT_CONFIG: TestDeliveryConfig = {
@@ -20,6 +21,7 @@ let inMemoryData: AppStorageData = {
   books: INITIAL_BOOKS,
   results: [],
   deliveryConfig: DEFAULT_CONFIG,
+  version: Date.now(),
 };
 
 // Determine storage path (supports local Node and serverless /tmp fallback)
@@ -45,6 +47,8 @@ function loadFromDisk(): void {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed.books) && parsed.books.length > 0) {
           inMemoryData.books = parsed.books;
+        } else {
+          inMemoryData.books = INITIAL_BOOKS;
         }
         if (Array.isArray(parsed.results)) {
           inMemoryData.results = parsed.results;
@@ -52,10 +56,17 @@ function loadFromDisk(): void {
         if (parsed.deliveryConfig) {
           inMemoryData.deliveryConfig = { ...DEFAULT_CONFIG, ...parsed.deliveryConfig };
         }
+        if (typeof parsed.version === 'number') {
+          inMemoryData.version = parsed.version;
+        }
       }
+    } else {
+      inMemoryData.books = INITIAL_BOOKS;
+      saveToDisk();
     }
   } catch (err) {
     console.warn("Could not load storage from disk, using in-memory state:", err);
+    inMemoryData.books = INITIAL_BOOKS;
   }
 }
 
@@ -73,11 +84,24 @@ function saveToDisk(): void {
 loadFromDisk();
 
 export const storage = {
+  getVersion(): number {
+    return inMemoryData.version || Date.now();
+  },
   getBooks(): Book[] {
+    if (!Array.isArray(inMemoryData.books) || inMemoryData.books.length === 0) {
+      inMemoryData.books = INITIAL_BOOKS;
+      inMemoryData.version = Date.now();
+      saveToDisk();
+    }
     return inMemoryData.books;
   },
   saveBooks(books: Book[]): Book[] {
-    inMemoryData.books = books;
+    if (!Array.isArray(books) || books.length === 0) {
+      inMemoryData.books = INITIAL_BOOKS;
+    } else {
+      inMemoryData.books = books;
+    }
+    inMemoryData.version = Date.now();
     saveToDisk();
     return inMemoryData.books;
   },
@@ -86,15 +110,18 @@ export const storage = {
   },
   addResult(result: StudentTestResult): StudentTestResult {
     inMemoryData.results = [result, ...inMemoryData.results];
+    inMemoryData.version = Date.now();
     saveToDisk();
     return result;
   },
   clearResults(): void {
     inMemoryData.results = [];
+    inMemoryData.version = Date.now();
     saveToDisk();
   },
   deleteResult(resultId: string): void {
     inMemoryData.results = inMemoryData.results.filter((r) => r.id !== resultId);
+    inMemoryData.version = Date.now();
     saveToDisk();
   },
   getDeliveryConfig(): TestDeliveryConfig {
@@ -102,6 +129,7 @@ export const storage = {
   },
   saveDeliveryConfig(config: TestDeliveryConfig): TestDeliveryConfig {
     inMemoryData.deliveryConfig = { ...inMemoryData.deliveryConfig, ...config };
+    inMemoryData.version = Date.now();
     saveToDisk();
     return inMemoryData.deliveryConfig;
   },

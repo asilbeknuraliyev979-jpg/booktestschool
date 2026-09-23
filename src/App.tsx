@@ -28,16 +28,8 @@ export default function App() {
     return INITIAL_BOOKS;
   });
 
-  // Student info state
-  const [studentInfo, setStudentInfo] = useState<StudentInfo>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.STUDENT);
-      if (saved) return JSON.parse(saved);
-    } catch (e) {
-      console.error(e);
-    }
-    return { fullName: '', grade: '' };
-  });
+  // Student info state - resets when test finishes so student name/class disappears on return
+  const [studentInfo, setStudentInfo] = useState<StudentInfo>({ fullName: '', grade: '' });
 
   // Delivery config state (Admin can configure)
   const [deliveryConfig, setDeliveryConfig] = useState<TestDeliveryConfig>(() => {
@@ -74,17 +66,12 @@ export default function App() {
   const [isPasscodeModalOpen, setIsPasscodeModalOpen] = useState(false);
   const [activeTestBook, setActiveTestBook] = useState<Book | null>(null);
   const [showStudentValidationToast, setShowStudentValidationToast] = useState(false);
+  const [isLiveConnected, setIsLiveConnected] = useState<boolean>(true);
 
   // Persistence effects
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.BOOKS, JSON.stringify(books));
   }, [books]);
-
-  useEffect(() => {
-    if (studentInfo.fullName || studentInfo.grade) {
-      localStorage.setItem(STORAGE_KEYS.STUDENT, JSON.stringify(studentInfo));
-    }
-  }, [studentInfo]);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.DELIVERY_CONFIG, JSON.stringify(deliveryConfig));
@@ -94,47 +81,81 @@ export default function App() {
     localStorage.setItem(STORAGE_KEYS.RESULTS, JSON.stringify(results));
   }, [results]);
 
-  // Central Server Synchronization on mount (Multi-computer sync)
+  // Global Real-time Multi-Computer Synchronization (SSE + Live Broadcast)
   useEffect(() => {
-    const syncFromServer = async () => {
-      try {
-        const booksRes = await fetch('/api/books');
-        if (booksRes.ok) {
-          const data = await booksRes.json();
-          if (data.success && Array.isArray(data.books) && data.books.length > 0) {
-            setBooks(data.books);
-          }
-        }
-      } catch (e) {
-        console.warn("Could not fetch books from central server:", e);
-      }
+    let eventSource: EventSource | null = null;
+    let reconnectTimeout: any = null;
+    let pollInterval: any = null;
 
+    const connectSSE = () => {
       try {
-        const resultsRes = await fetch('/api/results');
-        if (resultsRes.ok) {
-          const data = await resultsRes.json();
-          if (data.success && Array.isArray(data.results)) {
-            setResults(data.results);
-          }
-        }
-      } catch (e) {
-        console.warn("Could not fetch results from central server:", e);
-      }
+        eventSource = new EventSource('/api/realtime/events');
 
-      try {
-        const configRes = await fetch('/api/delivery-config');
-        if (configRes.ok) {
-          const data = await configRes.json();
-          if (data.success && data.config) {
-            setDeliveryConfig((prev) => ({ ...prev, ...data.config }));
+        eventSource.onopen = () => {
+          setIsLiveConnected(true);
+        };
+
+        eventSource.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.type === 'init') {
+              if (Array.isArray(data.books) && data.books.length > 0) {
+                setBooks(data.books);
+              }
+              if (Array.isArray(data.results)) {
+                setResults(data.results);
+              }
+              if (data.deliveryConfig) {
+                setDeliveryConfig((prev) => ({ ...prev, ...data.deliveryConfig }));
+              }
+              setIsLiveConnected(true);
+            } else if (data.type === 'books_updated' && Array.isArray(data.data?.books)) {
+              setBooks(data.data.books);
+            } else if (data.type === 'results_updated' && Array.isArray(data.data?.results)) {
+              setResults(data.data.results);
+            } else if (data.type === 'config_updated' && data.data?.config) {
+              setDeliveryConfig((prev) => ({ ...prev, ...data.data.config }));
+            }
+          } catch (err) {
+            console.warn("Failed to parse SSE payload:", err);
           }
-        }
-      } catch (e) {
-        console.warn("Could not fetch config from central server:", e);
+        };
+
+        eventSource.onerror = () => {
+          setIsLiveConnected(false);
+          if (eventSource) {
+            eventSource.close();
+            eventSource = null;
+          }
+          reconnectTimeout = setTimeout(connectSSE, 3000);
+        };
+      } catch (err) {
+        setIsLiveConnected(false);
+        reconnectTimeout = setTimeout(connectSSE, 4000);
       }
     };
 
-    syncFromServer();
+    connectSSE();
+
+    // Redundant fast poll every 4 seconds to guarantee sync even across strict proxies
+    const runFallbackPoll = async () => {
+      try {
+        const res = await fetch('/api/sync/status');
+        if (res.ok) {
+          setIsLiveConnected(true);
+        }
+      } catch {
+        setIsLiveConnected(false);
+      }
+    };
+
+    pollInterval = setInterval(runFallbackPoll, 4000);
+
+    return () => {
+      if (eventSource) eventSource.close();
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+      if (pollInterval) clearInterval(pollInterval);
+    };
   }, []);
 
   // Update books and synchronize with server for all computers
@@ -301,7 +322,8 @@ export default function App() {
       body: JSON.stringify({ result: newResult }),
     }).catch((err) => console.warn("Could not sync test result:", err));
 
-    // Clear saved student in localStorage so refreshing the page doesn't keep old student credentials
+    // Clear saved student so next entry starts completely clean
+    setStudentInfo({ fullName: '', grade: '' });
     localStorage.removeItem(STORAGE_KEYS.STUDENT);
   };
 
@@ -327,6 +349,7 @@ export default function App() {
         onExitAdmin={handleExitAdmin}
         studentName={studentInfo.fullName}
         studentGrade={studentInfo.grade}
+        isLiveConnected={isLiveConnected}
       />
 
       {/* Main Container */}

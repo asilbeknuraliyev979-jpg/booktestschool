@@ -1,0 +1,10 @@
+{
+  "books": [],
+  "results": [],
+  "deliveryConfig": {
+    "totalQuestions": 20,
+    "multipleChoiceCount": 15,
+    "writtenCount": 5,
+    "timeLimitMinutes": 25
+  }
+}

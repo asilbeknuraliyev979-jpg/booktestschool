@@ -559,34 +559,94 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   });
 
   const [isSyncingServer, setIsSyncingServer] = useState(false);
-  const [syncStatusText, setSyncStatusText] = useState<string | null>(null);
+  const [isPushingServer, setIsPushingServer] = useState(false);
+  const [syncBanner, setSyncBanner] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
+  // Pull latest data from central server
   const handleSyncWithServer = async () => {
     setIsSyncingServer(true);
-    setSyncStatusText(null);
+    setSyncBanner(null);
     try {
       const res = await fetch('/api/books');
       if (res.ok) {
         const data = await res.json();
-        if (data.success && Array.isArray(data.books)) {
+        if (data.success && Array.isArray(data.books) && data.books.length > 0) {
           onUpdateBooks(data.books);
-          setSyncStatusText("Server bilan muvaffaqiyatli sinxronlandi! Barcha testlar yangilandi.");
+          setSyncBanner({
+            type: 'success',
+            message: `Markaziy server bilan muvaffaqiyatli sinxronlandi! Jami ${data.books.length} ta kitob testi mavjud.`,
+          });
+        } else if (data.success && Array.isArray(data.books) && data.books.length === 0 && books.length > 0) {
+          // If server was clean/empty, automatically push our current books
+          await fetch('/api/books', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ books }),
+          });
+          setSyncBanner({
+            type: 'success',
+            message: `Mavjud ${books.length} ta kitob testi serverga yuklandi va barcha kompyuterlarga tarqatildi.`,
+          });
+        } else {
+          setSyncBanner({
+            type: 'success',
+            message: "Server bilan sinxron holatda.",
+          });
         }
       } else {
-        setSyncStatusText("Serverga ulanishda xatolik yuz berdi.");
+        setSyncBanner({
+          type: 'error',
+          message: `Serverga ulanishda xatolik yuz berdi (Status: ${res.status}). Iltimos qayta urinib ko'ring.`,
+        });
       }
     } catch {
-      setSyncStatusText("Tarmoq xatoligi yoki server javob bermadi.");
+      setSyncBanner({
+        type: 'error',
+        message: "Tarmoq xatoligi: Server javob bermadi. Server ishlayotganini tekshiring.",
+      });
     } finally {
       setIsSyncingServer(false);
-      setTimeout(() => setSyncStatusText(null), 4000);
+      setTimeout(() => setSyncBanner(null), 5000);
+    }
+  };
+
+  // Push local books to central server so other computers receive them immediately
+  const handlePushToServer = async () => {
+    setIsPushingServer(true);
+    setSyncBanner(null);
+    try {
+      const res = await fetch('/api/books', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ books }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSyncBanner({
+          type: 'success',
+          message: `Barcha ${books.length} ta kitob testi markaziy serverga saqlandi va barcha kompyuterlarga real vaqtda tarqatildi!`,
+        });
+      } else {
+        setSyncBanner({
+          type: 'error',
+          message: `Serverga saqlashda xatolik yuz berdi (Status: ${res.status}).`,
+        });
+      }
+    } catch {
+      setSyncBanner({
+        type: 'error',
+        message: "Tarmoq xatoligi: Serverga ma'lumot jo'natib bo'lmadi.",
+      });
+    } finally {
+      setIsPushingServer(false);
+      setTimeout(() => setSyncBanner(null), 5000);
     }
   };
 
   return (
     <div className="max-w-6xl mx-auto space-y-6 pb-20">
       {/* Multi-PC Central Server Sync & Persistence Banner */}
-      <div className="bg-gradient-to-r from-blue-900 to-indigo-900 text-white rounded-2xl p-4 sm:p-5 shadow-sm flex flex-wrap items-center justify-between gap-4">
+      <div className="bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 text-white rounded-2xl p-4 sm:p-5 shadow-sm flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center shrink-0">
             <Globe className="w-5 h-5 text-blue-300" />
@@ -594,25 +654,38 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           <div>
             <h3 className="font-bold text-sm sm:text-base flex items-center gap-2">
               <span>Barcha kompyuterlar bilan markaziy sinxronizatsiya</span>
-              <span className="text-2xs bg-emerald-500/30 text-emerald-300 border border-emerald-400/40 px-2 py-0.5 rounded-full font-bold uppercase">
-                Aktiv
+              <span className="text-2xs bg-emerald-500/30 text-emerald-300 border border-emerald-400/40 px-2 py-0.5 rounded-full font-bold uppercase flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                Real-time Live
               </span>
             </h3>
             <p className="text-xs text-blue-200 mt-0.5">
-              Siz yaratgan barcha testlar va o'quvchilar natijalari markaziy server orqali boshqa kompyuterlarda ham avtomatik ko'rinadi.
+              Siz yaratgan barcha testlar va o'quvchilar natijalari markaziy server orqali boshqa kompyuterlarda ham avtomatik, real vaqtda ko'rinadi.
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <button
             type="button"
             onClick={handleSyncWithServer}
             disabled={isSyncingServer}
             className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white/15 hover:bg-white/25 active:scale-95 text-xs font-semibold text-white transition-all border border-white/20"
+            title="Markaziy serverdan so'nggi testlarni yuklab olish"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isSyncingServer ? 'animate-spin' : ''}`} />
-            <span>{isSyncingServer ? 'Sinxronlanmoqda...' : 'Serverdan yangilash'}</span>
+            <span>{isSyncingServer ? 'Yuklanmoqda...' : 'Serverdan yangilash'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handlePushToServer}
+            disabled={isPushingServer}
+            className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-emerald-600/80 hover:bg-emerald-600 active:scale-95 text-xs font-semibold text-white transition-all border border-emerald-400/40 shadow-xs"
+            title="Ushbu kompyuterdagi barcha testlarni markaziy serverga va boshqa kompyuterlarga tarqatish"
+          >
+            <Upload className={`w-3.5 h-3.5 ${isPushingServer ? 'animate-bounce' : ''}`} />
+            <span>{isPushingServer ? "Yuborilmoqda..." : "Serverga tarqatish"}</span>
           </button>
 
           <button
@@ -627,10 +700,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         </div>
       </div>
 
-      {syncStatusText && (
-        <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs sm:text-sm rounded-xl font-medium flex items-center gap-2 animate-in fade-in duration-200">
-          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-          <span>{syncStatusText}</span>
+      {syncBanner && (
+        <div
+          className={`p-3.5 border text-xs sm:text-sm rounded-xl font-medium flex items-center gap-2.5 animate-in fade-in duration-200 ${
+            syncBanner.type === 'success'
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+              : 'bg-rose-50 border-rose-200 text-rose-900'
+          }`}
+        >
+          {syncBanner.type === 'success' ? (
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+          ) : (
+            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+          )}
+          <span>{syncBanner.message}</span>
         </div>
       )}
 

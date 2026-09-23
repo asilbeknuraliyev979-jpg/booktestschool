@@ -7,6 +7,7 @@ interface HeaderProps {
   onExitAdmin: () => void;
   studentName?: string;
   studentGrade?: string;
+  isLiveConnected?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -15,6 +16,7 @@ export const Header: React.FC<HeaderProps> = ({
   onExitAdmin,
   studentName,
   studentGrade,
+  isLiveConnected = true,
 }) => {
   return (
     <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200 shadow-xs">
@@ -43,6 +45,36 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Right Action */}
         <div className="flex items-center gap-2 sm:gap-3">
+          {/* Global Real-Time Live Status Indicator */}
+          <div
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border transition-all ${
+              isLiveConnected
+                ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                : 'bg-amber-50 text-amber-800 border-amber-200'
+            }`}
+            title={
+              isLiveConnected
+                ? "Barcha kompyuterlar bilan markaziy server orqali real vaqtda ulangan (Global Real-time)"
+                : "Serverga qayta ulanmoqda..."
+            }
+          >
+            {isLiveConnected ? (
+              <>
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                </span>
+                <span className="hidden md:inline">Global:</span>
+                <span className="font-bold">Real-time</span>
+              </>
+            ) : (
+              <>
+                <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+                <span className="hidden sm:inline">Ulanmoqda...</span>
+              </>
+            )}
+          </div>
+
           {!isAdmin && (
             <button
               id="admin-header-link"

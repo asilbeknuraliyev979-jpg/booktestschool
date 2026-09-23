@@ -512,14 +512,93 @@ Har bir savol uchun o'zbek tilida qisqa va aniq konstruktiv fikr (feedback) beri
 });
 
 // ==========================================
-// CENTRALIZED DATA SYNC ENDPOINTS (MULTI-DEVICE)
+// CENTRALIZED DATA SYNC ENDPOINTS (MULTI-DEVICE & REAL-TIME)
 // ==========================================
+
+// Global SSE clients pool for live multi-computer synchronization
+const sseClients = new Set<express.Response>();
+
+export function broadcastRealtimeEvent(event: {
+  type: 'init' | 'books_updated' | 'results_updated' | 'config_updated' | 'ping';
+  data?: any;
+  version?: number;
+}) {
+  const payload = `data: ${JSON.stringify({ ...event, timestamp: Date.now() })}\n\n`;
+  for (const client of sseClients) {
+    try {
+      client.write(payload);
+    } catch {
+      sseClients.delete(client);
+    }
+  }
+}
+
+// 0. Real-time Event Stream (SSE: Server-Sent Events)
+// All connected computers (Teacher Admin + all Students) maintain an open stream
+apiRouter.get(["/realtime/events", "/sync/events", "/events"], (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("X-Accel-Buffering", "no"); // Prevent nginx from buffering SSE
+  res.flushHeaders?.();
+
+  // Send initial snapshot immediately to the connected client
+  const initialPayload = {
+    type: "init",
+    books: storage.getBooks(),
+    results: storage.getResults(),
+    deliveryConfig: storage.getDeliveryConfig(),
+    version: storage.getVersion(),
+    connectedClients: sseClients.size + 1,
+    timestamp: Date.now(),
+  };
+
+  try {
+    res.write(`data: ${JSON.stringify(initialPayload)}\n\n`);
+  } catch (err) {
+    console.warn("Could not write initial SSE payload:", err);
+    return res.end();
+  }
+
+  sseClients.add(res);
+
+  // Keep-alive heartbeat every 15 seconds to prevent network timeouts
+  const heartbeat = setInterval(() => {
+    try {
+      res.write(`: ping\n\n`);
+    } catch {
+      clearInterval(heartbeat);
+      sseClients.delete(res);
+    }
+  }, 15000);
+
+  req.on("close", () => {
+    clearInterval(heartbeat);
+    sseClients.delete(res);
+  });
+});
+
+// 0.1 Quick status endpoint for polling or health check
+apiRouter.get("/sync/status", (req, res) => {
+  const books = storage.getBooks();
+  const results = storage.getResults();
+  return res.json({
+    success: true,
+    version: storage.getVersion(),
+    booksCount: books.length,
+    activeBooksCount: books.filter((b) => b.isActive !== false).length,
+    resultsCount: results.length,
+    connectedClients: sseClients.size,
+    timestamp: Date.now(),
+  });
+});
 
 // 1. Get all books
 apiRouter.get("/books", (req, res) => {
   try {
     const books = storage.getBooks();
-    return res.json({ success: true, books });
+    return res.json({ success: true, books, version: storage.getVersion() });
   } catch (err: any) {
     console.error("Get books error:", err);
     return res.status(500).json({ success: false, error: "Kitoblarni yuklashda xatolik" });
@@ -534,7 +613,20 @@ apiRouter.post("/books", (req, res) => {
       return res.status(400).json({ success: false, error: "Kitoblar ro'yxati noto'g'ri formatda" });
     }
     const saved = storage.saveBooks(books);
-    return res.json({ success: true, books: saved, message: "Kitoblar markaziy serverga saqlandi" });
+
+    // Instantly broadcast the updated books to ALL connected computers!
+    broadcastRealtimeEvent({
+      type: "books_updated",
+      data: { books: saved },
+      version: storage.getVersion(),
+    });
+
+    return res.json({
+      success: true,
+      books: saved,
+      version: storage.getVersion(),
+      message: "Kitoblar markaziy serverga saqlandi va barcha kompyuterlarga tarqatildi",
+    });
   } catch (err: any) {
     console.error("Save books error:", err);
     return res.status(500).json({ success: false, error: "Kitoblarni saqlashda xatolik" });
@@ -545,7 +637,7 @@ apiRouter.post("/books", (req, res) => {
 apiRouter.get("/results", (req, res) => {
   try {
     const results = storage.getResults();
-    return res.json({ success: true, results });
+    return res.json({ success: true, results, version: storage.getVersion() });
   } catch (err: any) {
     console.error("Get results error:", err);
     return res.status(500).json({ success: false, error: "Natijalarni yuklashda xatolik" });
@@ -560,7 +652,21 @@ apiRouter.post("/results", (req, res) => {
       return res.status(400).json({ success: false, error: "Natija ma'lumotlari to'liq emas" });
     }
     const saved = storage.addResult(result);
-    return res.json({ success: true, result: saved, message: "Test natijasi markaziy serverga saqlandi" });
+    const allResults = storage.getResults();
+
+    // Broadcast new result in real-time to teacher admin screen!
+    broadcastRealtimeEvent({
+      type: "results_updated",
+      data: { results: allResults },
+      version: storage.getVersion(),
+    });
+
+    return res.json({
+      success: true,
+      result: saved,
+      version: storage.getVersion(),
+      message: "Test natijasi markaziy serverga saqlandi",
+    });
   } catch (err: any) {
     console.error("Save result error:", err);
     return res.status(500).json({ success: false, error: "Natijani saqlashda xatolik" });
@@ -571,6 +677,13 @@ apiRouter.post("/results", (req, res) => {
 apiRouter.delete("/results", (req, res) => {
   try {
     storage.clearResults();
+
+    broadcastRealtimeEvent({
+      type: "results_updated",
+      data: { results: [] },
+      version: storage.getVersion(),
+    });
+
     return res.json({ success: true, message: "Barcha natijalar tozalandi" });
   } catch (err: any) {
     console.error("Clear results error:", err);
@@ -585,6 +698,14 @@ apiRouter.delete("/results/:id", (req, res) => {
     if (id) {
       storage.deleteResult(id);
     }
+    const allResults = storage.getResults();
+
+    broadcastRealtimeEvent({
+      type: "results_updated",
+      data: { results: allResults },
+      version: storage.getVersion(),
+    });
+
     return res.json({ success: true, message: "Natija o'chirildi" });
   } catch (err: any) {
     console.error("Delete result error:", err);
@@ -596,7 +717,7 @@ apiRouter.delete("/results/:id", (req, res) => {
 apiRouter.get("/delivery-config", (req, res) => {
   try {
     const config = storage.getDeliveryConfig();
-    return res.json({ success: true, config });
+    return res.json({ success: true, config, version: storage.getVersion() });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: "Sozlamalarni olishda xatolik" });
   }
@@ -609,7 +730,14 @@ apiRouter.post("/delivery-config", (req, res) => {
       return res.status(400).json({ success: false, error: "Sozlamalar berilmadi" });
     }
     const saved = storage.saveDeliveryConfig(config);
-    return res.json({ success: true, config: saved });
+
+    broadcastRealtimeEvent({
+      type: "config_updated",
+      data: { config: saved },
+      version: storage.getVersion(),
+    });
+
+    return res.json({ success: true, config: saved, version: storage.getVersion() });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: "Sozlamalarni saqlashda xatolik" });
   }
