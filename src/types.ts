@@ -46,6 +46,7 @@ export interface AIGenerationConfig {
   multipleChoiceGenerateCount: number; // e.g. 60
   writtenGenerateCount: number; // e.g. 20
   mode?: 'notebooklm' | 'pedagogical'; // NotebookLM strictly source-grounded or deep pedagogical
+  includeWebTests?: boolean; // Internetdagi rasmiy testlarni qidirib kitob bilan tekshirib qo'shish
 }
 
 export interface StudentInfo {

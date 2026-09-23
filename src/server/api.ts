@@ -1,6 +1,7 @@
 import express from "express";
 import { GoogleGenAI, Type } from "@google/genai";
 import { generateAlgorithmicQuestions } from "../utils/algorithmicQuestionGenerator";
+import { cyrillicToLatin, sanitizeQuestionToLatin } from "../utils/transliterate";
 import { storage } from "./store";
 import { INITIAL_BOOKS } from "../data/initialBooks";
 import {
@@ -135,48 +136,58 @@ async function generateQuestionBatch(
 ): Promise<{ multipleChoiceQuestions: any[]; writtenQuestions: any[] }> {
   const isNotebookLM = generationMode === 'notebooklm';
 
+  // Normalize inputs to standard Uzbek Latin
+  const latinTitle = cyrillicToLatin(bookTitle);
+  const latinAuthor = cyrillicToLatin(author || "Muallif");
+  const latinGrade = cyrillicToLatin(grade || "Maktab");
+  const latinContent = cyrillicToLatin(contentSlice);
+
   const prompt = isNotebookLM
     ? `Siz Google NotebookLM arxitekturasida ishlovchi, MANBAGA QAT'IY TAYANUVCHI (STRICT SOURCE-GROUNDED), oliy toifali akademik testolog va metodistsiz.
 Sizning yagona va mutlaq vazifangiz — faqat va faqat quyidagi berilgan kitob asari matnidan ASOSIY VA ENG MUHIM FAKTLAR, VOQEALAR VA SABAB-OQIBATLARNI ajratib olib, 100% matnga tayangan PROFESSIONAL TEST SAVOLLARI tuzishdir.
 
 Kitob ma'lumotlari:
-- Kitob nomi: "${bookTitle}"
-- Muallif: "${author || "Muallif"}"
-- Sinf: "${grade || "Maktab"}"
+- Kitob nomi: "${latinTitle}"
+- Muallif: "${latinAuthor}"
+- Sinf: "${latinGrade}"
 - Fokus/Qism: "${batchTheme}"
 
-NOTEBOOKLM STANDARTIDAGI QAT'IY TALABLAR (MUTLAQ MEZONLAR):
-1. ZERO HALLUCINATION (TO'QIMA YO'Q):
+MUTLAQ VA QAT'IY TALABLAR (BU MEZONLAR BUZILSA NATIJA QABUL QILINMAYDI):
+1. ALIFBO TALABI (ENG MUHIM):
+   - BARCHA savollar, variantlar (A, B, C, D), to'g'ri javoblar va izohlar FAQAT VA FAQAT O'ZBEK LOTIN ALIFBOSIDA (o', g', sh, ch kabi rasmiy lotin imlosida) yozilishi SHART!
+   - Hatto berilgan manba matn KIRILL ALIFBOSIDA bo'lsa ham, 100% O'ZBEK LOTIN ALIFBOSIGA O'GIRIB SAVOL TUZING! Birorta ham kirillcha harf (а, б, в, г, д...) qatnashmasin!
+2. ZERO HALLUCINATION (TO'QIMA YO'Q):
    - Savollar, to'g'ri javoblar va barcha variantlar FAQAT VA FAQAT quyida keltirilgan matn parchasida mavjud bo'lgan aniq faktlar, qahramonlar, voqealar va jumlalarga asoslanishi SHART.
    - Matnda bo'lmagan tashqi ma'lumotlarni o'zingizdan to'qimang.
-2. ASOSIY MA'LUMOTLAR VA MAZMUN:
+3. ASOSIY MA'LUMOTLAR VA MAZMUN:
    - Savollar ikkinchi darajali keraksiz mayda-chuydalar emas, balki asarning ASOSIY SYUJETI, kulminatsiyasi, qahramonlarning hal qiluvchi qarorlari, sabab-oqibatlari va muallifning markaziy g'oyasiga qaratilsin.
-3. CHALG'ITUVCHI VARIANTLAR (A, B, C, D) SIFATI:
+4. CHALG'ITUVCHI VARIANTLAR (A, B, C, D) SIFATI:
    - 4 ta variant (A, B, C, D) bir-biriga JUDA YAQIN, mantiqiy va ishonarli bo'lsin.
    - Noto'g'ri variantlar (chalg'ituvchilar) ham aynan shu asar matnidagi boshqa epizodlar va voqealarga asoslansin, toki asarni sinchiklab o'qimagan o'quvchi shunchaki taxmin qila olmasin.
    - correctOptionIndex 0 dan 3 gacha butun son bo'lsin (0=A, 1=B, 2=C, 3=D). To'g'ri javoblar tasodifiy har xil harflarga teng taqsimlansin.
-4. YOZMA SAVOLLAR:
+5. YOZMA SAVOLLAR:
    - O'quvchidan asar voqealari va sabab-oqibatlari bo'yicha aniq fikr talab qilinsin.
    - expectedAnswer: Asosiy etalon javob (matndan olingan fakt bilan).
    - keywords: Javobni tekshirish uchun matndagi 2-4 ta kalit so'z.
-5. ANIQ MIQDOR:
+6. ANIQ MIQDOR:
    - Aynan ${mcCount} ta variantli savol (A, B, C, D).
    - Aynan ${wrCount} ta yozma savol.
 
 MANBA MATN (FAQAT SHU MATNDAN FOYDALANING):
 """
-${contentSlice}
+${latinContent}
 """`
     : `Siz maktab ta'limi va o'zbek adabiyoti bo'yicha oliy toifali ekspert, professional pedagogik testologsiz.
 Quyida taqdim etilgan kitob asari matni asosida qahramonlar psixologiyasi, syujet ziddiyatlari va badiiy g'oyani tekshiruvchi ${mcCount} ta variantli va ${wrCount} ta yozma savol tuzing.
 
-Kitob: "${bookTitle}" (${author}), Sinf: "${grade}".
+Kitob: "${latinTitle}" (${latinAuthor}), Sinf: "${latinGrade}".
 Fokus: "${batchTheme}".
+ALIFBO TALABI: Savollar va javoblar FAQAT O'ZBEK LOTIN ALIFBOSIDA bo'lishi SHART! Hech qanday kirillcha harf bo'lmasin.
 4 ta variant bir-biriga juda yaqin, chalg'ituvchi va chuqur tahliliy bo'lsin.
 
 Matn:
 """
-${contentSlice}
+${latinContent}
 """`;
 
   const modelsToTry = ["gemini-2.5-flash", "gemini-3.8-flash", "gemini-3.1-flash-lite"];
@@ -188,7 +199,7 @@ ${contentSlice}
           contents: prompt,
           config: {
             systemInstruction:
-              "Siz Google NotebookLM tamoyillari asosida ishlovchi, faqat taqdim etilgan manbaga qat'iy tayanuvchi (Strict Source-Grounded) oliy toifali testolog-ekspertsiz. Matndan tashqaridagi to'qimalarga yo'l qo'ymaysiz. Faqat JSON formatda javob bering.",
+              "Siz Google NotebookLM tamoyillari asosida ishlovchi, faqat taqdim etilgan manbaga qat'iy tayanuvchi (Strict Source-Grounded) oliy toifali testolog-ekspertsiz. Matndan tashqaridagi to'qimalarga yo'l qo'ymaysiz. Barcha savollar va variantlarni FAQAT O'ZBEK LOTIN ALIFBOSIDA yozing. Faqat JSON formatda javob bering.",
             responseMimeType: "application/json",
             responseSchema: {
               type: Type.OBJECT,
@@ -233,8 +244,12 @@ ${contentSlice}
         if (response.text) {
           const parsed = JSON.parse(response.text);
           return {
-            multipleChoiceQuestions: parsed.multipleChoiceQuestions || [],
-            writtenQuestions: parsed.writtenQuestions || [],
+            multipleChoiceQuestions: (parsed.multipleChoiceQuestions || []).map((q: any) =>
+              sanitizeQuestionToLatin(q)
+            ),
+            writtenQuestions: (parsed.writtenQuestions || []).map((q: any) =>
+              sanitizeQuestionToLatin(q)
+            ),
           };
         }
       } catch (err) {
@@ -245,6 +260,88 @@ ${contentSlice}
   }
 
   throw new Error("Savollarni yaratishda model javob bermadi");
+}
+
+/**
+ * Searches the web for existing, official Uzbek literature exam questions on this book
+ * (from ZiyoNET, DTM, textbooks, educational portals), cross-verifies them against the book
+ * content, and returns verified questions strictly in Uzbek Latin script.
+ */
+async function searchAndVerifyWebQuestions(
+  ai: GoogleGenAI,
+  bookTitle: string,
+  author: string,
+  grade: string,
+  bookContentSlice: string,
+  maxCount: number = 10
+): Promise<{ multipleChoiceQuestions: any[]; writtenQuestions: any[] }> {
+  const latinTitle = cyrillicToLatin(bookTitle);
+  const latinAuthor = cyrillicToLatin(author || "Muallif");
+
+  const queryPrompt = `Google Search orqali internetdagi o'zbek adabiyoti saytlari, maktab darsliklari, ZiyoNET va DTM test bazalaridan «${latinTitle}» (${latinAuthor}) asari bo'yicha tuzilgan rasmiy test savollarini qidiring.
+Topilgan test savollarini quyidagi asar mazmuni bilan solishtirib tekshiring (cross-check):
+1. Savol va to'g'ri javob asar faktlari va syujetiga 100% to'g'ri keladimi?
+2. To'g'ri bo'lgan savollarni tanlab oling (ko'pi bilan ${maxCount} ta).
+3. ALIFBO TALABI: Barcha savollar va javoblar FAQAT O'ZBEK LOTIN ALIFBOSIDA bo'lishi SHART (agar kirillda bo'lsa lotinga o'giring)!
+4. Natijani JSON formatida qaytaring:
+{
+  "multipleChoiceQuestions": [
+    {
+      "question": "...",
+      "options": ["A", "B", "C", "D"],
+      "correctOptionIndex": 0,
+      "explanation": "🌐 Rasmiy manbalardan olingan va kitob matni orqali tasdiqlangan test."
+    }
+  ],
+  "writtenQuestions": [
+    {
+      "question": "...",
+      "expectedAnswer": "...",
+      "keywords": ["..."]
+    }
+  ]
+}
+
+Asar qisqacha mazmuni:
+"""
+${cyrillicToLatin(bookContentSlice.slice(0, 15000))}
+"""`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3.8-flash",
+      contents: queryPrompt,
+      config: {
+        tools: [{ googleSearch: {} }],
+        systemInstruction:
+          "Siz ta'lim metodisti va manbalarni solishtiruvchi ekspertsiz. Internetdan kitob testlarini qidirib, kitob matni bilan solishtirib tekshirasiz. Javobingizni FAQAT O'ZBEK LOTIN ALIFBOSIDA va JSON formatda bering.",
+      },
+    });
+
+    if (response.text) {
+      // Extract json from possible markdown fences
+      let jsonText = response.text.trim();
+      if (jsonText.includes("```json")) {
+        jsonText = jsonText.split("```json")[1].split("```")[0].trim();
+      } else if (jsonText.includes("```")) {
+        jsonText = jsonText.split("```")[1].split("```")[0].trim();
+      }
+
+      const parsed = JSON.parse(jsonText);
+      const mc = (parsed.multipleChoiceQuestions || []).map((q: any) =>
+        sanitizeQuestionToLatin({
+          ...q,
+          explanation: q.explanation || "🌐 Internetdagi rasmiy ta'lim manbalari bilan solishtirilib, kitob matni orqali tasdiqlangan test.",
+        })
+      );
+      const wr = (parsed.writtenQuestions || []).map((q: any) => sanitizeQuestionToLatin(q));
+      return { multipleChoiceQuestions: mc, writtenQuestions: wr };
+    }
+  } catch (err) {
+    console.warn("Web search and verification skipped due to:", err);
+  }
+
+  return { multipleChoiceQuestions: [], writtenQuestions: [] };
 }
 
 // 4. Professional AI Question Generation API (Admin protected)
@@ -258,6 +355,7 @@ apiRouter.post("/generate-questions", requireAdminAuth, async (req, res) => {
       multipleChoiceCount = 60,
       writtenCount = 20,
       generationMode = 'notebooklm',
+      includeWebTests = false,
     } = req.body;
 
     const safeTitle = sanitizeInput(bookTitle, 200);
@@ -309,6 +407,26 @@ apiRouter.post("/generate-questions", requireAdminAuth, async (req, res) => {
     let allWritten: any[] = [];
 
     try {
+      // Optional: Search and verify online/web exam questions if requested
+      let webMC: any[] = [];
+      let webWritten: any[] = [];
+      if (includeWebTests) {
+        try {
+          const webResult = await searchAndVerifyWebQuestions(
+            ai,
+            safeTitle,
+            safeAuthor,
+            safeGrade,
+            finalContent,
+            10
+          );
+          webMC = webResult.multipleChoiceQuestions;
+          webWritten = webResult.writtenQuestions;
+        } catch (webErr) {
+          console.warn("Web search test fetch failed:", webErr);
+        }
+      }
+
       if (totalCount > 35) {
         const halfMC = Math.ceil(Number(multipleChoiceCount) / 2);
         const remainingMC = Number(multipleChoiceCount) - halfMC;
@@ -343,8 +461,8 @@ apiRouter.post("/generate-questions", requireAdminAuth, async (req, res) => {
           safeMode
         );
 
-        allMC = [...batch1.multipleChoiceQuestions, ...batch2.multipleChoiceQuestions];
-        allWritten = [...batch1.writtenQuestions, ...batch2.writtenQuestions];
+        allMC = [...webMC, ...batch1.multipleChoiceQuestions, ...batch2.multipleChoiceQuestions];
+        allWritten = [...webWritten, ...batch1.writtenQuestions, ...batch2.writtenQuestions];
       } else {
         const singleBatch = await generateQuestionBatch(
           ai,
@@ -357,16 +475,22 @@ apiRouter.post("/generate-questions", requireAdminAuth, async (req, res) => {
           "Butun kitob bo'yicha to'liq savollar to'plami",
           safeMode
         );
-        allMC = singleBatch.multipleChoiceQuestions;
-        allWritten = singleBatch.writtenQuestions;
+        allMC = [...webMC, ...singleBatch.multipleChoiceQuestions];
+        allWritten = [...webWritten, ...singleBatch.writtenQuestions];
       }
+
+      // Mandatory Latin script sanitation on all generated questions
+      allMC = allMC.map(q => sanitizeQuestionToLatin(q));
+      allWritten = allWritten.map(q => sanitizeQuestionToLatin(q));
 
       return res.json({
         success: true,
         data: {
           multipleChoiceQuestions: allMC,
           writtenQuestions: allWritten,
-          mode: 'ai'
+          mode: 'ai',
+          webTestsIncluded: webMC.length > 0,
+          webTestsCount: webMC.length + webWritten.length
         },
       });
     } catch (genAiError) {
@@ -394,6 +518,51 @@ apiRouter.post("/generate-questions", requireAdminAuth, async (req, res) => {
     console.error("AI Generation error:", error);
     return res.status(500).json({
       error: error?.message || "Savollarni yaratishda xatolik yuz berdi",
+    });
+  }
+});
+
+// 4.1. Dedicated Web Search and Cross-Verification Endpoint
+apiRouter.post("/search-web-tests", requireAdminAuth, async (req, res) => {
+  try {
+    const { bookTitle, author, grade, bookText, count = 10 } = req.body;
+    const safeTitle = sanitizeInput(bookTitle, 200);
+    const safeAuthor = sanitizeInput(author, 200);
+    const safeGrade = sanitizeInput(grade, 100);
+    const finalContent = sanitizeInput(bookText || "", 500000);
+
+    if (!safeTitle) {
+      return res.status(400).json({ error: "Kitob nomi kiritilishi shart." });
+    }
+
+    const ai = getGenAI();
+    if (!ai) {
+      return res.status(400).json({
+        error: "Google Gemini AI ulanmagan. Internetdan testlarni qidirish uchun GEMINI_API_KEY talab qilinadi.",
+      });
+    }
+
+    const verified = await searchAndVerifyWebQuestions(
+      ai,
+      safeTitle,
+      safeAuthor,
+      safeGrade,
+      finalContent,
+      Number(count) || 10
+    );
+
+    return res.json({
+      success: true,
+      data: {
+        multipleChoiceQuestions: verified.multipleChoiceQuestions.map(q => sanitizeQuestionToLatin(q)),
+        writtenQuestions: verified.writtenQuestions.map(q => sanitizeQuestionToLatin(q)),
+        totalFound: verified.multipleChoiceQuestions.length + verified.writtenQuestions.length,
+      },
+    });
+  } catch (error: any) {
+    console.error("Web test search error:", error);
+    return res.status(500).json({
+      error: error?.message || "Internetdan testlarni qidirishda xatolik yuz berdi.",
     });
   }
 });

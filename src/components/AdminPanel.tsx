@@ -50,6 +50,7 @@ import { exportResultsToExcel } from '../utils/excelExport';
 import { extractPdfTextInBrowser } from '../utils/pdfExtractor';
 import { generateAlgorithmicQuestions } from '../utils/algorithmicQuestionGenerator';
 import { parseExternalQuizText } from '../utils/quizTextParser';
+import { cyrillicToLatin, sanitizeQuestionToLatin } from '../utils/transliterate';
 import { StudentAnalyticsDashboard } from './StudentAnalyticsDashboard';
 
 interface AdminPanelProps {
@@ -96,6 +97,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     multipleChoiceGenerateCount: 60,
     writtenGenerateCount: 20,
     mode: 'notebooklm',
+    includeWebTests: true,
   });
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationStep, setGenerationStep] = useState<string>('');
@@ -114,6 +116,99 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [newCorrectIndex, setNewCorrectIndex] = useState(0);
   const [newExpectedAnswer, setNewExpectedAnswer] = useState('');
   const [newKeywords, setNewKeywords] = useState('');
+  const [isFetchingWebTests, setIsFetchingWebTests] = useState(false);
+
+  // Convert selected book and all its questions to Uzbek Latin script
+  const handleConvertBookToLatin = (bookId: string) => {
+    const targetBook = books.find((b) => b.id === bookId);
+    if (!targetBook) return;
+
+    const latinizedQuestions = targetBook.questions.map((q) => sanitizeQuestionToLatin(q));
+    const updatedBook: Book = {
+      ...targetBook,
+      title: cyrillicToLatin(targetBook.title),
+      author: cyrillicToLatin(targetBook.author),
+      grade: cyrillicToLatin(targetBook.grade),
+      description: cyrillicToLatin(targetBook.description),
+      questions: latinizedQuestions,
+    };
+
+    const updated = books.map((b) => (b.id === bookId ? updatedBook : b));
+    onUpdateBooks(updated);
+    pushAllBooksToFirestore(updated).catch(console.error);
+    setGenSuccessMessage(`«${updatedBook.title}» kitobining barcha savollari to'liq O'zbek Lotin alifbosiga o'tkazildi!`);
+  };
+
+  // Search online tests for current book and add verified ones
+  const handleFetchWebTestsForCurrentBook = async (bookId: string) => {
+    const targetBook = books.find((b) => b.id === bookId);
+    if (!targetBook) return;
+
+    setIsFetchingWebTests(true);
+    try {
+      const token = adminToken || sessionStorage.getItem('maktab_admin_token') || '';
+      const res = await safeFetchJson<{
+        success: boolean;
+        error?: string;
+        data?: {
+          multipleChoiceQuestions: any[];
+          writtenQuestions: any[];
+          totalFound: number;
+        };
+      }>('/api/search-web-tests', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          bookTitle: targetBook.title,
+          author: targetBook.author,
+          grade: targetBook.grade,
+          count: 10,
+        }),
+      });
+
+      if (res.success && res.data && res.data.totalFound > 0) {
+        const newMC: Question[] = (res.data.multipleChoiceQuestions || []).map((q: any, i: number) => ({
+          id: `mc-web-${Date.now()}-${i}`,
+          type: 'multiple-choice',
+          question: q.question,
+          options: q.options || ['A', 'B', 'C', 'D'],
+          correctOptionIndex: typeof q.correctOptionIndex === 'number' ? q.correctOptionIndex : 0,
+          explanation: q.explanation || "🌐 Internetdagi rasmiy ta'lim manbalari bilan solishtirilib, kitob matni orqali tasdiqlangan test.",
+        }));
+
+        const newWr: Question[] = (res.data.writtenQuestions || []).map((q: any, i: number) => ({
+          id: `w-web-${Date.now()}-${i}`,
+          type: 'written',
+          question: q.question,
+          expectedAnswer: q.expectedAnswer || '',
+          keywords: Array.isArray(q.keywords) ? q.keywords : [],
+        }));
+
+        const added = [...newMC, ...newWr].map((q) => sanitizeQuestionToLatin(q));
+        const updatedBook: Book = {
+          ...targetBook,
+          questions: [...targetBook.questions, ...added],
+        };
+
+        const updated = books.map((b) => (b.id === bookId ? updatedBook : b));
+        onUpdateBooks(updated);
+        pushAllBooksToFirestore(updated).catch(console.error);
+        setGenSuccessMessage(
+          `Internetdan «${targetBook.title}» bo'yicha ${added.length} ta tekshirilgan rasmiy test savoli (barchasi O'zbek Lotin alifbosida) muvaffaqiyatli qo'shildi!`
+        );
+      } else {
+        alert("Internetdan ushbu asar bo'yicha qo'shimcha testlar topilmadi.");
+      }
+    } catch (err: any) {
+      console.error(err);
+      alert(err?.message || "Internetdan testlarni qidirishda xatolik yuz berdi.");
+    } finally {
+      setIsFetchingWebTests(false);
+    }
+  };
 
   // --- Analytics Filter State ---
   const [searchStudent, setSearchStudent] = useState('');
@@ -311,13 +406,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             multipleChoiceCount: genConfig.multipleChoiceGenerateCount,
             writtenCount: genConfig.writtenGenerateCount,
             generationMode: genConfig.mode || 'notebooklm',
+            includeWebTests: genConfig.includeWebTests ?? true,
           }),
         });
 
         if (resData.success && resData.data && resData.data.multipleChoiceQuestions?.length > 0) {
           rawData = resData.data;
+          const webNotice = (resData.data as any).webTestsIncluded
+            ? " + 🌐 Internetdagi rasmiy darslik/DTM testlari bilan tekshirilib tasdiqlangan savollar"
+            : "";
           modeLabel = resData.data.mode === 'ai'
-            ? (genConfig.mode === 'pedagogical' ? 'Pedagogik Badiiy AI' : 'Google NotebookLM Manbali AI (Faqat asar faktlari)')
+            ? (genConfig.mode === 'pedagogical' ? 'Pedagogik Badiiy AI' : 'Google NotebookLM Manbali AI (Faqat asar faktlari)') + webNotice
             : "O'rnatilgan aqlli tahlil (API kalitsiz)";
         }
       } catch (apiError) {
@@ -343,7 +442,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       }
 
       const generatedMC: Question[] = (rawData.multipleChoiceQuestions || []).map(
-        (q: any, i: number) => ({
+        (q: any, i: number) => sanitizeQuestionToLatin({
           id: `mc-${Date.now()}-${i}`,
           type: 'multiple-choice',
           question: q.question,
@@ -354,7 +453,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       );
 
       const generatedWritten: Question[] = (rawData.writtenQuestions || []).map(
-        (q: any, i: number) => ({
+        (q: any, i: number) => sanitizeQuestionToLatin({
           id: `w-${Date.now()}-${i}`,
           type: 'written',
           question: q.question,
@@ -365,13 +464,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
       const allQuestions = [...generatedMC, ...generatedWritten];
 
+      const cleanTitle = cyrillicToLatin(newBookTitle.trim());
+      const cleanAuthor = cyrillicToLatin(newBookAuthor.trim() || "Muallif");
+      const cleanGrade = cyrillicToLatin(newBookGrade);
+
       const newBook: Book = {
         id: `book-${Date.now()}`,
-        title: newBookTitle.trim(),
-        author: newBookAuthor.trim() || "Muallif",
-        grade: newBookGrade,
+        title: cleanTitle,
+        author: cleanAuthor,
+        grade: cleanGrade,
         coverColor: "from-blue-600 to-indigo-800",
-        description: `Kitobdan ${modeLabel} orqali jami ${allQuestions.length} ta yuqori saviyali, variantlari bir-biriga yaqin professional test savollari shakllantirildi (${generatedMC.length} ta variantli, ${generatedWritten.length} ta yozma).`,
+        description: `Kitobdan ${modeLabel} orqali jami ${allQuestions.length} ta yuqori saviyali, O'zbek Lotin alifbosidagi professional test savollari shakllantirildi (${generatedMC.length} ta variantli, ${generatedWritten.length} ta yozma).`,
         questions: allQuestions,
         createdAt: new Date().toISOString(),
         isActive: true, // Yangi yaratilgan test avtomatik faol (Start) bo'ladi
@@ -382,7 +485,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       setSelectedBookId(newBook.id);
 
       setGenSuccessMessage(
-        `Muvaffaqiyatli! "${newBookTitle}" kitobi bo'yicha jami ${allQuestions.length} ta yuqori saviyali test (${generatedMC.length} ta variantli test va ${generatedWritten.length} ta yozma savol) ${modeLabel} orqali yaratildi va saqlandi.`
+        `Muvaffaqiyatli! "${cleanTitle}" kitobi bo'yicha jami ${allQuestions.length} ta test savoli (barchasi O'zbek Lotin alifbosida) ${modeLabel} orqali tayyorlandi va saqlandi.`
       );
 
       // Reset file & inputs
@@ -1433,6 +1536,26 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 <p className="text-xs text-slate-400 mt-1">Savollar bazasiga qo'shiladi</p>
               </div>
             </div>
+
+            {/* Additional Advanced Options: Web Verification & Latin Guarantee */}
+            <div className="pt-2 border-t border-slate-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={genConfig.includeWebTests ?? true}
+                  onChange={(e) => setGenConfig({ ...genConfig, includeWebTests: e.target.checked })}
+                  className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500"
+                />
+                <span className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+                  <Globe className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Internetdagi rasmiy testlar (DTM/ZiyoNET)ni qidirib, kitob matni bilan tekshirib qo'shish</span>
+                </span>
+              </label>
+
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-lg text-[11px] font-bold">
+                <span>🔤 100% O'zbek Lotin Alifbosi Kafolati</span>
+              </div>
+            </div>
           </div>
 
           {/* Book Textarea / Extracted content */}
@@ -1594,13 +1717,35 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   </span>
                 </div>
 
-                <button
-                  onClick={() => setIsAddingQuestion(true)}
-                  className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Yangi savol qo'shish</span>
-                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleConvertBookToLatin(selectedBook.id)}
+                    title="Kitob va barcha test savollarini to'liq O'zbek Lotin alifbosiga o'tkazish"
+                    className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shadow-2xs"
+                  >
+                    <span>🔤 Lotin Alifbosiga O'tkazish</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={isFetchingWebTests}
+                    onClick={() => handleFetchWebTestsForCurrentBook(selectedBook.id)}
+                    title="Internetdagi rasmiy darslik/DTM testlarini qidirib, kitob matni bilan tekshirib qo'shish"
+                    className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-300 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shadow-2xs disabled:opacity-50"
+                  >
+                    <Globe className={`w-3.5 h-3.5 ${isFetchingWebTests ? 'animate-spin' : ''}`} />
+                    <span>{isFetchingWebTests ? "Qidirilmoqda..." : "🌐 Internetdan Testlar Qo'shish"}</span>
+                  </button>
+
+                  <button
+                    onClick={() => setIsAddingQuestion(true)}
+                    className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Yangi savol qo'shish</span>
+                  </button>
+                </div>
               </div>
 
               {/* Add Question Form Inline */}

@@ -6,6 +6,8 @@
  * (A, B, C, D variantli va yozma savollarni) bevosita yaratadi.
  */
 
+import { cyrillicToLatin, sanitizeQuestionToLatin } from './transliterate';
+
 export interface GeneratedQuestionItem {
   question: string;
   options?: string[];
@@ -149,14 +151,20 @@ export function generateAlgorithmicQuestions(
   mcCount: number = 60,
   wrCount: number = 20
 ): GeneratedQuestionBatchResult {
-  const sentences = extractQualitySentences(content);
+  // 1. Mandatory Uzbek Latin normalization (even if source text is in Cyrillic)
+  const latinTitle = cyrillicToLatin(bookTitle);
+  const latinAuthor = cyrillicToLatin(author);
+  const latinGrade = cyrillicToLatin(grade);
+  const latinContent = cyrillicToLatin(content);
+
+  const sentences = extractQualitySentences(latinContent);
   if (sentences.length < 5) {
     throw new Error(
       "Kitob matni juda qisqa yoki sifatli jumlalar ajratib olinmadi. Iltimos to'liqroq kitob matnini kiriting."
     );
   }
 
-  const characters = extractCharacterNames(sentences, author);
+  const characters = extractCharacterNames(sentences, latinAuthor);
   const keywords = extractDistinctiveKeywords(sentences);
 
   const mcQuestions: GeneratedQuestionItem[] = [];
@@ -327,8 +335,8 @@ export function generateAlgorithmicQuestions(
   }
 
   return {
-    multipleChoiceQuestions: mcQuestions,
-    writtenQuestions: writtenQuestions,
+    multipleChoiceQuestions: mcQuestions.map((q) => sanitizeQuestionToLatin(q)),
+    writtenQuestions: writtenQuestions.map((q) => sanitizeQuestionToLatin(q)),
     source: 'algorithmic',
   };
 }

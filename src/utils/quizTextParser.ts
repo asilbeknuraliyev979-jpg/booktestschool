@@ -1,4 +1,5 @@
 import { Question } from '../types';
+import { sanitizeQuestionToLatin } from './transliterate';
 
 /**
  * Intelligent Parser for Google NotebookLM & External AI Quiz Text
@@ -109,5 +110,8 @@ export function parseExternalQuizText(rawText: string): {
     }
   });
 
-  return { multipleChoiceQuestions: mcQuestions, writtenQuestions: writtenQuestions };
+  return {
+    multipleChoiceQuestions: mcQuestions.map((q) => sanitizeQuestionToLatin(q)),
+    writtenQuestions: writtenQuestions.map((q) => sanitizeQuestionToLatin(q)),
+  };
 }
