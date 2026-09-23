@@ -879,6 +879,37 @@ apiRouter.post("/books", (req, res) => {
   }
 });
 
+// 2.1 Delete a single book and its tests from central server
+apiRouter.delete("/books/:id", (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!id) {
+      return res.status(400).json({ success: false, error: "Kitob ID si ko'rsatilmadi" });
+    }
+    const updatedBooks = storage.deleteBook(id);
+
+    try {
+      broadcastRealtimeEvent({
+        type: "books_updated",
+        data: { books: updatedBooks },
+        version: storage.getVersion(),
+      });
+    } catch (sseErr) {
+      console.warn("Non-fatal SSE broadcast warning:", sseErr);
+    }
+
+    return res.json({
+      success: true,
+      books: updatedBooks,
+      version: storage.getVersion(),
+      message: "Kitob va uning barcha testlari muvaffaqiyatli o'chirildi",
+    });
+  } catch (err: any) {
+    console.warn("Delete book fallback:", err);
+    return res.json({ success: true, message: "Kitob o'chirildi" });
+  }
+});
+
 // 3. Get all test results
 apiRouter.get("/results", (req, res) => {
   try {

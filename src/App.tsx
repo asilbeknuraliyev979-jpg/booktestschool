@@ -13,6 +13,7 @@ import {
   fetchResultsFromFirestore,
   subscribeToDeliveryConfig,
   pushAllBooksToFirestore,
+  deleteBookFromFirestore,
   saveResultToFirestore,
   deleteResultFromFirestore,
   clearAllResultsFromFirestore,
@@ -197,6 +198,22 @@ export default function App() {
       });
       return updated;
     });
+  };
+
+  // Delete book and its questions globally across ALL computers and Firebase
+  const handleDeleteBook = async (bookId: string) => {
+    // 1. Immediately update local state
+    setBooks((prev) => prev.filter((b) => b.id !== bookId));
+    // 2. Delete from Google Firebase Firestore permanently
+    deleteBookFromFirestore(bookId).catch((err: any) =>
+      console.warn("Firestore delete book notice:", err)
+    );
+    // 3. Delete from central server backend storage
+    try {
+      await fetch(`/api/books/${bookId}`, { method: 'DELETE' });
+    } catch (e) {
+      console.warn("Server delete book notice:", e);
+    }
   };
 
   // Update delivery config and synchronize globally
@@ -426,6 +443,7 @@ export default function App() {
           <AdminPanel
             books={books}
             onUpdateBooks={handleUpdateBooks}
+            onDeleteBook={handleDeleteBook}
             deliveryConfig={deliveryConfig}
             onUpdateDeliveryConfig={handleUpdateDeliveryConfig}
             results={results}

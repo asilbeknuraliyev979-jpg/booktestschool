@@ -44,7 +44,11 @@ import {
   AIGenerationConfig,
   StudentTestResult,
 } from '../types';
-import { pushAllBooksToFirestore, fetchResultsFromFirestore } from '../services/firebase';
+import {
+  pushAllBooksToFirestore,
+  fetchResultsFromFirestore,
+  deleteBookFromFirestore,
+} from '../services/firebase';
 import { safeFetchJson } from '../utils/api';
 import { exportResultsToExcel } from '../utils/excelExport';
 import { extractPdfTextInBrowser } from '../utils/pdfExtractor';
@@ -56,6 +60,7 @@ import { StudentAnalyticsDashboard } from './StudentAnalyticsDashboard';
 interface AdminPanelProps {
   books: Book[];
   onUpdateBooks: (books: Book[]) => void;
+  onDeleteBook?: (bookId: string) => Promise<void> | void;
   deliveryConfig: TestDeliveryConfig;
   onUpdateDeliveryConfig: (config: TestDeliveryConfig) => void;
   results: StudentTestResult[];
@@ -69,6 +74,7 @@ interface AdminPanelProps {
 export const AdminPanel: React.FC<AdminPanelProps> = ({
   books,
   onUpdateBooks,
+  onDeleteBook,
   deliveryConfig,
   onUpdateDeliveryConfig,
   results,
@@ -594,6 +600,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       b.id === selectedBook.id ? { ...b, questions: updatedQuestions } : b
     );
     onUpdateBooks(updatedBooks);
+    pushAllBooksToFirestore(updatedBooks).catch(console.warn);
   };
 
   // Save edited question
@@ -611,21 +618,35 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   };
 
   // Delete Entire Book / Test
-  const handleDeleteBook = (bookId: string) => {
+  const handleDeleteBook = async (bookId: string) => {
     const target = books.find((b) => b.id === bookId);
     if (!target) return;
     if (
       !confirm(
-        `Haqiqatan ham "${target.title}" kitobini va uning barcha ${target.questions.length} ta savollarini butunlay o'chirmoqchimisiz?`
+        `Haqiqatan ham «${target.title}» kitobini va uning barcha ${target.questions.length} ta savollarini butunlay o'chirmoqchimisiz?\n\nBu amal bekor qilinmaydi va kitob barcha kompyuterlardan hamda Firebase bazasidan butunlay o'chiriladi.`
       )
     ) {
       return;
     }
 
-    const remaining = books.filter((b) => b.id !== bookId);
-    onUpdateBooks(remaining);
-    if (selectedBookId === bookId) {
-      setSelectedBookId(remaining.length > 0 ? remaining[0].id : '');
+    try {
+      if (onDeleteBook) {
+        await onDeleteBook(bookId);
+      } else {
+        const remaining = books.filter((b) => b.id !== bookId);
+        onUpdateBooks(remaining);
+        await deleteBookFromFirestore(bookId).catch(console.warn);
+      }
+
+      if (selectedBookId === bookId) {
+        const remaining = books.filter((b) => b.id !== bookId);
+        setSelectedBookId(remaining.length > 0 ? remaining[0].id : '');
+      }
+
+      setGenSuccessMessage(`«${target.title}» kitobi va uning barcha testlari butunlay o'chirildi!`);
+    } catch (err: any) {
+      console.error("Kitobni o'chirishda xatolik:", err);
+      alert("Kitobni o'chirishda xatolik yuz berdi. Iltimos qaytadan urinib ko'ring.");
     }
   };
 
@@ -1163,6 +1184,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                           title="Savollarni ko'rish va tahrirlash"
                         >
                           Tahrirlash
+                        </button>
+
+                        {/* Delete Book with all questions */}
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteBook(book.id)}
+                          className="px-3.5 py-2.5 rounded-xl font-bold text-xs text-rose-700 bg-rose-50 hover:bg-rose-100 hover:text-rose-800 border border-rose-200 transition-all flex items-center gap-1.5 shadow-2xs active:scale-95"
+                          title="Ushbu kitob va uning barcha test savollarini butunlay o'chirish"
+                        >
+                          <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                          <span>O'chirish</span>
                         </button>
                       </div>
                     </div>

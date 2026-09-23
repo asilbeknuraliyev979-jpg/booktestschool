@@ -54,10 +54,22 @@ export function subscribeToBooks(
     booksCol,
     async (snapshot) => {
       if (snapshot.empty) {
-        // If Firestore books collection is completely empty on first launch, seed INITIAL_BOOKS
-        console.log("Firestore books collection is empty. Seeding initial books...");
-        await seedInitialBooks();
-        return;
+        // Only seed on brand new database launch if never initialized before
+        const hasInitialized = typeof window !== 'undefined' && localStorage.getItem('maktab_firestore_initialized') === 'true';
+        if (!hasInitialized) {
+          console.log("Firestore books collection is empty on first launch. Seeding initial books...");
+          if (typeof window !== 'undefined') localStorage.setItem('maktab_firestore_initialized', 'true');
+          await seedInitialBooks();
+          return;
+        } else {
+          // User intentionally deleted all books, reflect empty array
+          onUpdate([]);
+          return;
+        }
+      }
+
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('maktab_firestore_initialized', 'true');
       }
 
       const fetchedBooks: Book[] = [];
@@ -123,30 +135,56 @@ export async function saveBookToFirestore(book: Book): Promise<void> {
   await setDoc(bookRef, { ...cleanBook, updatedAt: Date.now() }, { merge: true });
 }
 
-// Push all local books to Firestore in one atomic batch
+// Push all local books to Firestore in one atomic batch, and remove any deleted books
 export async function pushAllBooksToFirestore(books: Book[]): Promise<void> {
-  const batch = writeBatch(db);
-  for (const book of books) {
-    const cleanId = String(book.id || `book-${Date.now()}`);
-    const bookRef = doc(db, 'books', cleanId);
-    batch.set(
-      bookRef,
-      {
-        ...book,
-        id: cleanId,
-        isActive: book.isActive !== false,
-        updatedAt: Date.now(),
-      },
-      { merge: true }
-    );
+  try {
+    const booksCol = collection(db, 'books');
+    const existingSnap = await getDocs(booksCol);
+    const activeIds = new Set(books.map((b) => String(b.id)));
+
+    const batch = writeBatch(db);
+
+    // 1. Update or create current active books
+    for (const book of books) {
+      const cleanId = String(book.id || `book-${Date.now()}`);
+      const bookRef = doc(db, 'books', cleanId);
+      batch.set(
+        bookRef,
+        {
+          ...book,
+          id: cleanId,
+          isActive: book.isActive !== false,
+          updatedAt: Date.now(),
+        },
+        { merge: true }
+      );
+    }
+
+    // 2. Delete any books that exist in Firestore but were removed locally
+    existingSnap.forEach((docSnap) => {
+      if (!activeIds.has(docSnap.id)) {
+        batch.delete(docSnap.ref);
+      }
+    });
+
+    await batch.commit();
+  } catch (err) {
+    console.error("pushAllBooksToFirestore error:", err);
+    throw err;
   }
-  await batch.commit();
 }
 
 // Delete a book globally from Firestore
 export async function deleteBookFromFirestore(bookId: string): Promise<void> {
-  const bookRef = doc(db, 'books', bookId);
-  await deleteDoc(bookRef);
+  try {
+    const cleanId = String(bookId);
+    const bookRef = doc(db, 'books', cleanId);
+    await deleteDoc(bookRef);
+    console.log(`Book "${cleanId}" permanently deleted from Firestore.`);
+  } catch (err) {
+    console.error("deleteBookFromFirestore error:", err);
+    throw err;
+  }
 }
 
 // Helper to recursively remove undefined fields which Firestore rejects

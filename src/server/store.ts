@@ -99,7 +99,7 @@ export const storage = {
     return inMemoryData.version || Date.now();
   },
   getBooks(): Book[] {
-    if (!Array.isArray(inMemoryData.books) || inMemoryData.books.length === 0) {
+    if (!Array.isArray(inMemoryData.books)) {
       inMemoryData.books = INITIAL_BOOKS;
       inMemoryData.version = Date.now();
       saveToDisk();
@@ -108,8 +108,8 @@ export const storage = {
   },
   saveBooks(books: Book[]): Book[] {
     try {
-      if (!Array.isArray(books) || books.length === 0) {
-        inMemoryData.books = INITIAL_BOOKS;
+      if (!Array.isArray(books)) {
+        inMemoryData.books = [];
       } else {
         // Sanitize books to ensure completely clean, serializable objects
         inMemoryData.books = books.map((b, index) => ({
@@ -139,6 +139,17 @@ export const storage = {
       saveToDisk();
     } catch (err) {
       console.warn("Storage saveBooks error, keeping current memory:", err);
+    }
+    return inMemoryData.books;
+  },
+  deleteBook(bookId: string): Book[] {
+    try {
+      const cleanId = String(bookId);
+      inMemoryData.books = (inMemoryData.books || []).filter((b) => String(b.id) !== cleanId);
+      inMemoryData.version = Date.now();
+      saveToDisk();
+    } catch (err) {
+      console.warn("Storage deleteBook error:", err);
     }
     return inMemoryData.books;
   },
