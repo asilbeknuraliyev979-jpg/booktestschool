@@ -27,8 +27,8 @@ interface LoginAttemptRecord {
 const activeSessions = new Map<string, SessionData>();
 const loginAttempts = new Map<string, LoginAttemptRecord>();
 
-// Cleanup expired sessions every 15 minutes
-setInterval(() => {
+// Cleanup expired sessions every 15 minutes (unref'd to prevent blocking serverless lifecycle)
+const cleanupInterval = setInterval(() => {
   const now = Date.now();
   for (const [token, session] of activeSessions.entries()) {
     if (session.expiresAt <= now) {
@@ -41,6 +41,10 @@ setInterval(() => {
     }
   }
 }, 15 * 60 * 1000);
+
+if (cleanupInterval.unref) {
+  cleanupInterval.unref();
+}
 
 /**
  * Constant-time string comparison using SHA-256 digests
