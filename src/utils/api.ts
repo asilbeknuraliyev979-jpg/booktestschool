@@ -35,6 +35,12 @@ export async function safeFetchJson<T = any>(
       );
     }
 
+    if (res.status === 413 || rawText.includes('FUNCTION_PAYLOAD_TOO_LARGE') || rawText.includes('Payload Too Large')) {
+      throw new Error(
+        "Fayl hajmi server limiti (4.5 MB) dan katta (FUNCTION_PAYLOAD_TOO_LARGE). Tizim PDF faylini brauzeringiz orqali bevosita tahlil qilmoqda."
+      );
+    }
+
     if (rawText.includes('FUNCTION_INVOCATION_FAILED') || (parsedData?.error && parsedData.error.includes('FUNCTION_INVOCATION_FAILED'))) {
       throw new Error(
         "Vercel Serverless xatoligi (FUNCTION_INVOCATION_FAILED): Serverless funksiya ishga tushishida to'xtab qoldi. Iltimos, Vercel-da GEMINI_API_KEY o'rnatilganligini tekshiring va loyihani oxirgi versiya bilan qayta deploy (Redeploy) qiling."

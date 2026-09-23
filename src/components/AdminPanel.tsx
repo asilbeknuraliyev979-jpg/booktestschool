@@ -40,6 +40,7 @@ import {
 } from '../types';
 import { safeFetchJson } from '../utils/api';
 import { exportResultsToExcel } from '../utils/excelExport';
+import { extractPdfTextInBrowser } from '../utils/pdfExtractor';
 import { StudentAnalyticsDashboard } from './StudentAnalyticsDashboard';
 
 interface AdminPanelProps {
@@ -75,6 +76,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [pdfBase64, setPdfBase64] = useState<string | null>(null);
   const [pdfFileName, setPdfFileName] = useState<string | null>(null);
   const [isParsingPdf, setIsParsingPdf] = useState(false);
+  const [pdfProgress, setPdfProgress] = useState<{ current: number; total: number } | null>(null);
   const [pdfStats, setPdfStats] = useState<{ pageCount: number; charCount: number } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
 
@@ -132,55 +134,93 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
       setIsParsingPdf(true);
       setPdfFileName(file.name);
+      setPdfProgress({ current: 0, total: 0 });
 
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        const base64String = e.target?.result as string;
-        setPdfBase64(base64String);
+      // Auto-suggest title if blank
+      if (!newBookTitle) {
+        const cleanName = file.name
+          .replace(/\.pdf$/i, '')
+          .replace(/[_\-]+/g, ' ')
+          .trim();
+        setNewBookTitle(cleanName);
+      }
 
-        try {
-          const token = adminToken || sessionStorage.getItem('maktab_admin_token') || '';
-          const data = await safeFetchJson<{
-            success: boolean;
-            error?: string;
-            fullText: string;
-            pageCount: number;
-            characterCount: number;
-          }>('/api/parse-pdf', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(token ? { Authorization: `Bearer ${token}` } : {}),
-            },
-            body: JSON.stringify({ pdfBase64: base64String }),
-          });
+      try {
+        // 1. Primary: Extract PDF text directly inside the browser using Mozilla PDF.js!
+        // This is 100% immune to Vercel's 4.5MB request payload limit (FUNCTION_PAYLOAD_TOO_LARGE).
+        const result = await extractPdfTextInBrowser(file, (current, total) => {
+          setPdfProgress({ current, total });
+        });
 
-          if (!data.success) {
-            throw new Error(data.error || "PDF matnini ajratib bo'lmadi.");
-          }
-
-          setNewBookText(data.fullText);
+        if (result.text && result.text.length > 50) {
+          setNewBookText(result.text);
           setPdfStats({
-            pageCount: data.pageCount,
-            charCount: data.characterCount,
+            pageCount: result.pageCount,
+            charCount: result.characterCount,
           });
-
-          // Auto-suggest title if blank
-          if (!newBookTitle) {
-            const cleanName = file.name
-              .replace(/\.pdf$/i, '')
-              .replace(/[_\-]+/g, ' ')
-              .trim();
-            setNewBookTitle(cleanName);
-          }
-        } catch (err: any) {
-          console.error(err);
-          setGenError(err?.message || "PDF faylini o'qishda xatolik yuz berdi.");
-        } finally {
+          setPdfProgress(null);
           setIsParsingPdf(false);
+          return;
         }
-      };
-      reader.readAsDataURL(file);
+
+        // If client extraction returned empty (e.g. scanned images without text layer)
+        if (file.size > 4 * 1024 * 1024) {
+          throw new Error(
+            "Ushbu PDF fayldan matn ajratib bo'lmadi (ehtimol skanerlangan rasm yoki matnsiz formatda). Iltimos, elektron matnli PDF yuklang yoki kitob matnidan nusxa ko'chirib quyidagi matn maydoniga joylashtiring."
+          );
+        }
+
+        // 2. Fallback for small files (< 4MB) to server endpoint
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+          const base64String = e.target?.result as string;
+          setPdfBase64(base64String);
+
+          try {
+            const token = adminToken || sessionStorage.getItem('maktab_admin_token') || '';
+            const data = await safeFetchJson<{
+              success: boolean;
+              error?: string;
+              fullText: string;
+              pageCount: number;
+              characterCount: number;
+            }>('/api/parse-pdf', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+              },
+              body: JSON.stringify({ pdfBase64: base64String }),
+            });
+
+            if (!data.success) {
+              throw new Error(data.error || "PDF matnini ajratib bo'lmadi.");
+            }
+
+            setNewBookText(data.fullText);
+            setPdfStats({
+              pageCount: data.pageCount,
+              charCount: data.characterCount,
+            });
+          } catch (err: any) {
+            console.error(err);
+            setGenError(err?.message || "PDF faylini o'qishda xatolik yuz berdi.");
+          } finally {
+            setIsParsingPdf(false);
+            setPdfProgress(null);
+          }
+        };
+        reader.readAsDataURL(file);
+      } catch (err: any) {
+        console.error("PDF extraction error:", err);
+        setGenError(
+          err?.message ||
+          "PDF faylini o'qishda xatolik yuz berdi. Iltimos skaner qilinmagan, matnli PDF kitob yuklang yoki matnni to'g'ridan-to'g'ri maydonga kiriting."
+        );
+        setIsParsingPdf(false);
+        setPdfProgress(null);
+      }
+      return;
     } else {
       setGenError("Faqat PDF (.pdf) yoki matn (.txt) formatidagi fayllarni yuklashingiz mumkin.");
     }
@@ -244,8 +284,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           bookTitle: newBookTitle,
           author: newBookAuthor,
           grade: newBookGrade,
-          bookText: newBookText,
-          pdfBase64,
+          bookText: newBookText ? newBookText.slice(0, 150000) : '',
+          // Never send large pdfBase64 to avoid Vercel 4.5MB FUNCTION_PAYLOAD_TOO_LARGE
+          pdfBase64: !newBookText && pdfBase64 && pdfBase64.length < 3 * 1024 * 1024 ? pdfBase64 : undefined,
           multipleChoiceCount: genConfig.multipleChoiceGenerateCount,
           writtenCount: genConfig.writtenGenerateCount,
         }),
@@ -547,7 +588,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 </div>
               </div>
 
-              {(genError.includes('404') || genError.includes('Vercel') || genError.includes('GEMINI_API_KEY') || genError.includes('API') || genError.includes('FUNCTION_INVOCATION_FAILED') || genError.includes('server error')) && (
+              {(genError.includes('404') || genError.includes('Vercel') || genError.includes('GEMINI_API_KEY') || genError.includes('API') || genError.includes('FUNCTION_INVOCATION_FAILED') || genError.includes('FUNCTION_PAYLOAD_TOO_LARGE') || genError.includes('server error')) && (
                 <div className="mt-2 p-3 bg-white rounded-lg border border-red-200 text-xs text-slate-700 space-y-1.5">
                   <p className="font-semibold text-red-800 flex items-center gap-1.5">
                     <span>💡 Vercel-da generatsiya qilish uchun qadamlar:</span>
@@ -597,12 +638,28 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             />
 
             {isParsingPdf ? (
-              <div className="space-y-3 py-4">
+              <div className="space-y-3 py-4 max-w-sm mx-auto">
                 <RefreshCw className="w-10 h-10 text-blue-600 animate-spin mx-auto" />
                 <p className="font-bold text-slate-800 text-sm">
-                  PDF kitob o'qilmoqda va matn ajratib olinmoqda...
+                  {pdfProgress && pdfProgress.total > 0
+                    ? `PDF kitob o'qilmoqda: ${pdfProgress.current} / ${pdfProgress.total} sahifa`
+                    : "PDF kitob tahlil qilinmoqda..."}
                 </p>
-                <p className="text-xs text-slate-500">Iltimos bir necha soniya kuting</p>
+                {pdfProgress && pdfProgress.total > 0 && (
+                  <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden shadow-inner">
+                    <div
+                      className="bg-blue-600 h-2 rounded-full transition-all duration-150"
+                      style={{
+                        width: `${Math.min(100, Math.round((pdfProgress.current / pdfProgress.total) * 100))}%`,
+                      }}
+                    />
+                  </div>
+                )}
+                <p className="text-xs text-slate-500">
+                  {pdfProgress && pdfProgress.total > 0
+                    ? `${Math.round((pdfProgress.current / pdfProgress.total) * 100)}% yakunlandi (brauzerda bevosita o'qilmoqda)`
+                    : "Iltimos bir necha soniya kuting"}
+                </p>
               </div>
             ) : pdfStats && pdfFileName ? (
               <div className="space-y-3">
