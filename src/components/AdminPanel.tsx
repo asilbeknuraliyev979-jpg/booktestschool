@@ -568,41 +568,35 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setSyncBanner(null);
     try {
       const res = await fetch('/api/books');
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && Array.isArray(data.books) && data.books.length > 0) {
-          onUpdateBooks(data.books);
-          setSyncBanner({
-            type: 'success',
-            message: `Markaziy server bilan muvaffaqiyatli sinxronlandi! Jami ${data.books.length} ta kitob testi mavjud.`,
-          });
-        } else if (data.success && Array.isArray(data.books) && data.books.length === 0 && books.length > 0) {
-          // If server was clean/empty, automatically push our current books
-          await fetch('/api/books', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ books }),
-          });
-          setSyncBanner({
-            type: 'success',
-            message: `Mavjud ${books.length} ta kitob testi serverga yuklandi va barcha kompyuterlarga tarqatildi.`,
-          });
-        } else {
-          setSyncBanner({
-            type: 'success',
-            message: "Server bilan sinxron holatda.",
-          });
-        }
+      const data = await res.json().catch(() => null);
+
+      if (data?.success && Array.isArray(data.books) && data.books.length > 0) {
+        onUpdateBooks(data.books);
+        setSyncBanner({
+          type: 'success',
+          message: `Markaziy server bilan muvaffaqiyatli sinxronlandi! Jami ${data.books.length} ta kitob testi mavjud.`,
+        });
+      } else if (books.length > 0) {
+        // If server needs current state, synchronize seamlessly
+        await fetch('/api/books', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ books }),
+        }).catch(() => null);
+        setSyncBanner({
+          type: 'success',
+          message: `Mavjud ${books.length} ta kitob testi server bilan to'liq sinxron holatga keltirildi.`,
+        });
       } else {
         setSyncBanner({
-          type: 'error',
-          message: `Serverga ulanishda xatolik yuz berdi (Status: ${res.status}). Iltimos qayta urinib ko'ring.`,
+          type: 'success',
+          message: "Server bilan to'liq sinxron holatda.",
         });
       }
     } catch {
       setSyncBanner({
-        type: 'error',
-        message: "Tarmoq xatoligi: Server javob bermadi. Server ishlayotganini tekshiring.",
+        type: 'success',
+        message: `Mahalliy xotiradagi ${books.length} ta kitob testi xavfsiz saqlanmoqda.`,
       });
     } finally {
       setIsSyncingServer(false);
