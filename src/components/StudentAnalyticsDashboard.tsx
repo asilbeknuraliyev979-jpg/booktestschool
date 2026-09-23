@@ -119,7 +119,7 @@ export const StudentAnalyticsDashboard: React.FC<StudentAnalyticsDashboardProps>
     return Object.entries(map)
       .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
       .map(([grade, stats]) => ({
-        grade,
+        grade: grade.includes('sinf') ? grade : `${grade} sinf`,
         avgScore: Math.round(stats.totalScore / stats.count),
         students: stats.count,
       }));

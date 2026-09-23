@@ -59,7 +59,11 @@ export const Header: React.FC<HeaderProps> = ({
             <div className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-900">
               <GraduationCap className="w-4 h-4 text-blue-600" />
               <span className="font-semibold">{studentName}</span>
-              <span className="text-blue-500 font-normal">({studentGrade})</span>
+              {studentGrade && (
+                <span className="text-blue-600 font-medium">
+                  ({studentGrade.includes('sinf') ? studentGrade : `${studentGrade} sinf`})
+                </span>
+              )}
             </div>
           )}
 

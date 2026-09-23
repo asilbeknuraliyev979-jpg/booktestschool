@@ -51,6 +51,21 @@ export interface StudentInfo {
   grade: string;
 }
 
+export const SCHOOL_GRADES = ['5', '6', '7', '8', '9', '10', '11'] as const;
+export const CLASS_LETTERS = ['A', 'B', 'D'] as const;
+
+export const ALL_SCHOOL_CLASSES = [
+  '5-A', '5-B', '5-D',
+  '6-A', '6-B', '6-D',
+  '7-A', '7-B', '7-D',
+  '8-A', '8-B', '8-D',
+  '9-A', '9-B', '9-D',
+  '10-A', '10-B', '10-D',
+  '11-A', '11-B', '11-D',
+] as const;
+
+export type SchoolClass = typeof ALL_SCHOOL_CLASSES[number];
+
 export interface QuestionResultDetail {
   questionId: string;
   questionText: string;

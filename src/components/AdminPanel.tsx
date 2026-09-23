@@ -521,7 +521,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   // Filtered results
   const filteredResults = results.filter((r) => {
     const matchName = r.studentName.toLowerCase().includes(searchStudent.toLowerCase());
-    const matchClass = filterClass === 'all' || r.studentGrade.toLowerCase().includes(filterClass.toLowerCase());
+    const matchClass =
+      filterClass === 'all' ||
+      (filterClass.includes('-')
+        ? r.studentGrade.toLowerCase().trim() === filterClass.toLowerCase().trim()
+        : r.studentGrade.toLowerCase().startsWith(filterClass.toLowerCase()));
     return matchName && matchClass;
   });
 
@@ -770,13 +774,38 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 onChange={(e) => setNewBookGrade(e.target.value)}
                 className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-slate-300 focus:border-blue-600 focus:outline-none bg-white"
               >
-                <option value="5-sinf">5-sinf</option>
-                <option value="6-sinf">6-sinf</option>
-                <option value="7-sinf">7-sinf</option>
-                <option value="8-sinf">8-sinf</option>
-                <option value="9-sinf">9-sinf</option>
-                <option value="10-sinf">10-sinf</option>
-                <option value="11-sinf">11-sinf</option>
+                <optgroup label="Umumiy sinflar">
+                  <option value="5-sinf (5-A, 5-B, 5-D)">5-sinf (5-A, 5-B, 5-D)</option>
+                  <option value="6-sinf (6-A, 6-B, 6-D)">6-sinf (6-A, 6-B, 6-D)</option>
+                  <option value="7-sinf (7-A, 7-B, 7-D)">7-sinf (7-A, 7-B, 7-D)</option>
+                  <option value="8-sinf (8-A, 8-B, 8-D)">8-sinf (8-A, 8-B, 8-D)</option>
+                  <option value="9-sinf (9-A, 9-B, 9-D)">9-sinf (9-A, 9-B, 9-D)</option>
+                  <option value="10-sinf (10-A, 10-B, 10-D)">10-sinf (10-A, 10-B, 10-D)</option>
+                  <option value="11-sinf (11-A, 11-B, 11-D)">11-sinf (11-A, 11-B, 11-D)</option>
+                </optgroup>
+                <optgroup label="Alohida sinf uchun">
+                  <option value="5-A sinf">5-A sinf</option>
+                  <option value="5-B sinf">5-B sinf</option>
+                  <option value="5-D sinf">5-D sinf</option>
+                  <option value="6-A sinf">6-A sinf</option>
+                  <option value="6-B sinf">6-B sinf</option>
+                  <option value="6-D sinf">6-D sinf</option>
+                  <option value="7-A sinf">7-A sinf</option>
+                  <option value="7-B sinf">7-B sinf</option>
+                  <option value="7-D sinf">7-D sinf</option>
+                  <option value="8-A sinf">8-A sinf</option>
+                  <option value="8-B sinf">8-B sinf</option>
+                  <option value="8-D sinf">8-D sinf</option>
+                  <option value="9-A sinf">9-A sinf</option>
+                  <option value="9-B sinf">9-B sinf</option>
+                  <option value="9-D sinf">9-D sinf</option>
+                  <option value="10-A sinf">10-A sinf</option>
+                  <option value="10-B sinf">10-B sinf</option>
+                  <option value="10-D sinf">10-D sinf</option>
+                  <option value="11-A sinf">11-A sinf</option>
+                  <option value="11-B sinf">11-B sinf</option>
+                  <option value="11-D sinf">11-D sinf</option>
+                </optgroup>
               </select>
             </div>
           </div>
@@ -1384,14 +1413,49 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   onChange={(e) => setFilterClass(e.target.value)}
                   className="px-3 py-1.5 text-xs rounded-xl border border-slate-300 bg-white focus:outline-none focus:border-blue-600"
                 >
-                  <option value="all">Barcha sinflar</option>
-                  <option value="5">5-sinflar</option>
-                  <option value="6">6-sinflar</option>
-                  <option value="7">7-sinflar</option>
-                  <option value="8">8-sinflar</option>
-                  <option value="9">9-sinflar</option>
-                  <option value="10">10-sinflar</option>
-                  <option value="11">11-sinflar</option>
+                  <option value="all">Barcha sinflar (5-A — 11-D)</option>
+                  <optgroup label="5-sinflar">
+                    <option value="5">Barcha 5-sinflar</option>
+                    <option value="5-A">5-A sinf</option>
+                    <option value="5-B">5-B sinf</option>
+                    <option value="5-D">5-D sinf</option>
+                  </optgroup>
+                  <optgroup label="6-sinflar">
+                    <option value="6">Barcha 6-sinflar</option>
+                    <option value="6-A">6-A sinf</option>
+                    <option value="6-B">6-B sinf</option>
+                    <option value="6-D">6-D sinf</option>
+                  </optgroup>
+                  <optgroup label="7-sinflar">
+                    <option value="7">Barcha 7-sinflar</option>
+                    <option value="7-A">7-A sinf</option>
+                    <option value="7-B">7-B sinf</option>
+                    <option value="7-D">7-D sinf</option>
+                  </optgroup>
+                  <optgroup label="8-sinflar">
+                    <option value="8">Barcha 8-sinflar</option>
+                    <option value="8-A">8-A sinf</option>
+                    <option value="8-B">8-B sinf</option>
+                    <option value="8-D">8-D sinf</option>
+                  </optgroup>
+                  <optgroup label="9-sinflar">
+                    <option value="9">Barcha 9-sinflar</option>
+                    <option value="9-A">9-A sinf</option>
+                    <option value="9-B">9-B sinf</option>
+                    <option value="9-D">9-D sinf</option>
+                  </optgroup>
+                  <optgroup label="10-sinflar">
+                    <option value="10">Barcha 10-sinflar</option>
+                    <option value="10-A">10-A sinf</option>
+                    <option value="10-B">10-B sinf</option>
+                    <option value="10-D">10-D sinf</option>
+                  </optgroup>
+                  <optgroup label="11-sinflar">
+                    <option value="11">Barcha 11-sinflar</option>
+                    <option value="11-A">11-A sinf</option>
+                    <option value="11-B">11-B sinf</option>
+                    <option value="11-D">11-D sinf</option>
+                  </optgroup>
                 </select>
               </div>
 

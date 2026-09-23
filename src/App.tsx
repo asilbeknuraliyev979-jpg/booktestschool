@@ -228,7 +228,7 @@ export default function App() {
         {showStudentValidationToast && (
           <div className="mb-6 p-4 bg-amber-500 text-white font-medium text-sm rounded-xl shadow-md flex items-center justify-between animate-in slide-in-from-top-2 duration-200">
             <span>
-              ⚠️ Iltimos, oldin chap tomonda ism-familiyangiz va sinfingizni kiriting!
+              ⚠️ Iltimos, oldin chap tomonda ism-familiyangiz va sinfingizni (5-A dan 11-D gacha) tanlang!
             </span>
             <button
               onClick={() => setShowStudentValidationToast(false)}
