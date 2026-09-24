@@ -36,6 +36,7 @@ import {
   Unlock,
   PlayCircle,
   X,
+  FileUp,
 } from 'lucide-react';
 import {
   Book,
@@ -57,6 +58,7 @@ import { parseExternalQuizText } from '../utils/quizTextParser';
 import { cyrillicToLatin, sanitizeQuestionToLatin } from '../utils/transliterate';
 import { findOfficialWebQuestions } from '../data/officialWebQuestionBank';
 import { StudentAnalyticsDashboard } from './StudentAnalyticsDashboard';
+import { ImportTestQuestionsModal } from './ImportTestQuestionsModal';
 
 interface AdminPanelProps {
   books: Book[];
@@ -112,6 +114,60 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [genSuccessMessage, setGenSuccessMessage] = useState<string | null>(null);
   const [showNotebookLMModal, setShowNotebookLMModal] = useState(false);
   const [notebookLMText, setNotebookLMText] = useState('');
+  const [showImportModal, setShowImportModal] = useState(false);
+
+  // Handler: Add parsed questions from Word/PDF to an existing book
+  const handleImportToBook = async (bookId: string, questionsToAdd: Question[]) => {
+    const targetBook = books.find((b) => b.id === bookId);
+    if (!targetBook) return;
+
+    const sanitizedQuestions = questionsToAdd.map((q) => sanitizeQuestionToLatin(q));
+    const updatedBook: Book = {
+      ...targetBook,
+      questions: [...targetBook.questions, ...sanitizedQuestions],
+    };
+
+    const updatedBooks = books.map((b) => (b.id === bookId ? updatedBook : b));
+    onUpdateBooks(updatedBooks);
+    await pushAllBooksToFirestore(updatedBooks).catch(console.warn);
+    setSelectedBookId(bookId);
+    setGenSuccessMessage(
+      `«${targetBook.title}» kitobiga Word/PDF hujjatidan ${sanitizedQuestions.length} ta yangi test savoli muvaffaqiyatli qo'shildi!`
+    );
+  };
+
+  // Handler: Create brand new book/test collection from Word/PDF parsed questions
+  const handleCreateNewBookWithQuestions = async (
+    title: string,
+    author: string,
+    grade: string,
+    questions: Question[]
+  ) => {
+    const sanitizedQuestions = questions.map((q) => sanitizeQuestionToLatin(q));
+    const cleanTitle = cyrillicToLatin(title.trim() || 'Import Qilingan Testlar');
+    const cleanAuthor = cyrillicToLatin(author.trim() || 'Noma\'lum muallif');
+
+    const newBook: Book = {
+      id: `book-${Date.now()}`,
+      title: cleanTitle,
+      author: cleanAuthor,
+      grade: grade || '8-sinf',
+      coverColor: 'from-blue-600 to-indigo-800',
+      description: `Word/PDF hujjatidan avtomatik ajratib olingan ${sanitizedQuestions.length} ta rasmiy test to'plami.`,
+      isActive: true,
+      questions: sanitizedQuestions,
+      createdAt: new Date().toISOString(),
+    };
+
+    const updatedBooks = [...books, newBook];
+    onUpdateBooks(updatedBooks);
+    await pushAllBooksToFirestore(updatedBooks).catch(console.warn);
+    setSelectedBookId(newBook.id);
+    setActiveTab('control');
+    setGenSuccessMessage(
+      `«${newBook.title}» yangi test to'plami yaratildi va ${sanitizedQuestions.length} ta savol muvaffaqiyatli yuklandi!`
+    );
+  };
 
   // --- Edit Questions State ---
   const [selectedBookId, setSelectedBookId] = useState<string>(books[0]?.id || '');
@@ -1037,6 +1093,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           <Settings className="w-4 h-4" />
           <span>Test Sozlamalari</span>
         </button>
+
+        <button
+          type="button"
+          onClick={() => setShowImportModal(true)}
+          className="flex-1 min-w-[200px] py-2.5 px-4 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-all bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white shadow-sm hover:brightness-110 active:scale-95 border border-indigo-400/40"
+          title="Word (.docx) yoki PDF fayldagi testlarni import qilib olish"
+        >
+          <FileUp className="w-4 h-4 text-white" />
+          <span>Word/PDF Test Import</span>
+          <span className="px-1.5 py-0.5 rounded-full text-3xs font-black bg-white/25 text-white uppercase tracking-wider">
+            Yangi
+          </span>
+        </button>
       </div>
 
       {/* TAB 0: TEST CONTROL (START / FINISH) */}
@@ -1074,6 +1143,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               >
                 <Square className="w-4 h-4 fill-rose-600" />
                 <span>Barchasini Yakunlash (Finish All)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowImportModal(true)}
+                className="px-4 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 active:scale-95 text-white rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 transition-all shadow-sm"
+                title="Word (.docx) yoki PDF fayldagi testlarni import qilib olish"
+              >
+                <FileUp className="w-4 h-4" />
+                <span>Word / PDF Test Import</span>
               </button>
             </div>
           </div>
@@ -1259,6 +1338,31 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 </span>
               </div>
             </div>
+          </div>
+
+          {/* Quick Import Callout */}
+          <div className="p-4 bg-gradient-to-r from-blue-50 via-indigo-50 to-purple-50 border border-blue-200/80 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 bg-blue-600 text-white rounded-xl shadow-xs shrink-0">
+                <FileUp className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="text-xs sm:text-sm font-bold text-slate-900">
+                  Sizda allaqachon tayyor test savollari bormi? (Word .docx yoki PDF)
+                </h4>
+                <p className="text-2xs sm:text-xs text-slate-600 mt-0.5">
+                  Faylni yuklang — tizim barcha savol va variantlarni (A, B, C, D) avtomatik ajratib oladi.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowImportModal(true)}
+              className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white text-xs font-bold rounded-xl flex items-center justify-center gap-2 shrink-0 transition-all shadow-xs"
+            >
+              <FileUp className="w-4 h-4" />
+              <span>Tayyor Test Faylini Import Qilish</span>
+            </button>
           </div>
 
           {genError && (
@@ -1790,6 +1894,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   >
                     <Globe className={`w-3.5 h-3.5 ${isFetchingWebTests ? 'animate-spin' : ''}`} />
                     <span>{isFetchingWebTests ? "Qidirilmoqda..." : "🌐 Internetdan Testlar Qo'shish"}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowImportModal(true)}
+                    title="Word (.docx) yoki PDF fayldagi testlarni import qilish va ushbu kitobga qo'shish"
+                    className="px-3.5 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 active:scale-95 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs"
+                  >
+                    <FileUp className="w-3.5 h-3.5" />
+                    <span>📥 Word/PDF dan Import Qilish</span>
                   </button>
 
                   <button
@@ -2934,6 +3048,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           </div>
         </div>
       )}
+
+      {/* MODAL: Word (.docx) & PDF Intelligent Test Importer */}
+      <ImportTestQuestionsModal
+        isOpen={showImportModal}
+        onClose={() => setShowImportModal(false)}
+        books={books}
+        currentBookId={selectedBookId}
+        onImportToBook={handleImportToBook}
+        onCreateNewBookWithQuestions={handleCreateNewBookWithQuestions}
+      />
     </div>
   );
 };

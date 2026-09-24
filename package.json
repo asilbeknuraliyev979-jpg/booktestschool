@@ -16,6 +16,7 @@
     "express": "^5.2.1",
     "firebase": "^12.19.0",
     "lucide-react": "^1.16.0",
+    "mammoth": "^1.12.3",
     "motion": "^12.4.0",
     "pdf-parse": "^2.4.5",
     "pdfjs-dist": "3.11.174",
